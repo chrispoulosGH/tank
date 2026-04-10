@@ -2,57 +2,65 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
   <title>Tank Battle</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+
+    html, body {
       background: #0d0d0d;
       color: #eee;
       font-family: 'Courier New', monospace;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    body {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      user-select: none;
+      min-height: 100dvh;
     }
 
-    /* --- Name Screen --- */
+    /* ── Name screen ───────────────────────────────────────────── */
     #name-screen {
       text-align: center;
-      padding: 40px;
+      padding: 24px;
     }
     #name-screen h1 {
-      font-size: 56px;
+      font-size: clamp(28px, 8vw, 56px);
       letter-spacing: 8px;
       color: #f39c12;
       text-shadow: 0 0 20px #f39c12aa;
       margin-bottom: 8px;
     }
-    #name-screen p {
-      color: #888;
-      margin-bottom: 24px;
-      font-size: 14px;
-    }
+    #name-screen p { color: #888; margin-bottom: 20px; font-size: clamp(11px, 2vw, 14px); }
     #name-input {
       font-family: 'Courier New', monospace;
-      font-size: 20px;
+      font-size: clamp(16px, 3vw, 20px);
       padding: 10px 16px;
       border-radius: 6px;
       border: 2px solid #444;
       background: #1a1a1a;
       color: #eee;
-      width: 280px;
+      width: min(280px, 80vw);
       text-align: center;
       outline: none;
     }
     #name-input:focus { border-color: #f39c12; }
     #join-btn {
       display: block;
-      margin: 16px auto 0;
+      margin: 14px auto 0;
       font-family: 'Courier New', monospace;
-      font-size: 18px;
+      font-size: clamp(15px, 3vw, 18px);
       font-weight: bold;
       padding: 12px 40px;
       border-radius: 6px;
@@ -61,13 +69,12 @@
       color: white;
       cursor: pointer;
       letter-spacing: 2px;
-      transition: background 0.15s;
     }
-    #join-btn:hover { background: #c0392b; }
+    #join-btn:active { background: #c0392b; }
     .key-hint {
-      margin-top: 32px;
+      margin-top: 24px;
       color: #555;
-      font-size: 13px;
+      font-size: 12px;
       line-height: 2;
     }
     .key-hint span {
@@ -79,13 +86,20 @@
       margin: 2px;
       color: #aaa;
     }
+    /* hide keyboard hints on touch devices */
+    @media (pointer: coarse) { .key-hint { display: none; } }
 
-    /* --- Game --- */
+    /* ── Game view ─────────────────────────────────────────────── */
     #game-wrap {
       display: none;
+      position: fixed;
+      inset: 0;
       flex-direction: column;
       align-items: center;
+      justify-content: center;
     }
+
+    /* Desktop top-bar — hidden on touch screens */
     #top-bar {
       width: 1200px;
       display: flex;
@@ -95,16 +109,29 @@
       font-size: 13px;
       color: #777;
     }
+    @media (pointer: coarse) { #top-bar { display: none !important; } }
+
     #my-status { color: #eee; }
     #controls-hint { font-size: 12px; }
-    #canvas-wrap { position: relative; }
+
+    #canvas-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+    }
+
     canvas {
       display: block;
       border: 2px solid #333;
+      touch-action: none;
     }
+
     #overlay {
       position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
+      inset: 0;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -119,16 +146,146 @@
       display: none;
     }
     #respawn-box h2 { color: #e74c3c; font-size: 28px; letter-spacing: 4px; }
-    #respawn-count { font-size: 40px; margin-top: 8px; color: #f39c12; }
+    #respawn-count  { font-size: 40px; margin-top: 8px; color: #f39c12; }
+
+    /* ── Mobile controls overlay ────────────────────────────────── */
+    #mobile-controls {
+      display: none;   /* shown via JS on touch devices */
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 300;
+    }
+
+    /* D-pad — bottom-left */
+    #dpad {
+      position: absolute;
+      left:   max(14px, env(safe-area-inset-left, 14px));
+      bottom: max(14px, env(safe-area-inset-bottom, 14px));
+      display: grid;
+      grid-template-columns: repeat(3, 62px);
+      grid-template-rows:    repeat(3, 62px);
+      gap: 5px;
+      pointer-events: none;
+    }
+
+    /* Action buttons — bottom-right */
+    #action-btns {
+      position: absolute;
+      right:  max(14px, env(safe-area-inset-right, 14px));
+      bottom: max(14px, env(safe-area-inset-bottom, 14px));
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    /* Mute button — top-right corner on mobile */
+    #mobile-mute {
+      position: absolute;
+      top:   max(10px, env(safe-area-inset-top, 10px));
+      right: max(10px, env(safe-area-inset-right, 10px));
+      pointer-events: all;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      background: #196319;
+      color: #eee;
+      border: 1px solid #555;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    /* Shared button style */
+    .ctrl-btn {
+      pointer-events: all;
+      width: 62px;
+      height: 62px;
+      border-radius: 14px;
+      background: rgba(10,10,10,0.55);
+      border: 2px solid rgba(255,255,255,0.22);
+      color: white;
+      font-size: 22px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+      cursor: pointer;
+      gap: 1px;
+      transition: background 0.08s, border-color 0.08s, transform 0.08s;
+    }
+    .ctrl-btn .lbl {
+      font-size: 9px;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 1px;
+      opacity: 0.75;
+      line-height: 1;
+    }
+    .ctrl-btn.pressed {
+      background: rgba(255,255,255,0.22);
+      border-color: rgba(255,255,255,0.7);
+      transform: scale(0.90);
+    }
+
+    /* D-pad arrow buttons */
+    #btn-up    { grid-column: 2; grid-row: 1; font-size: 26px; }
+    #btn-left  { grid-column: 1; grid-row: 2; font-size: 26px; }
+    #btn-right { grid-column: 3; grid-row: 2; font-size: 26px; }
+    #btn-down  { grid-column: 2; grid-row: 3; font-size: 26px; }
+
+    /* D-pad centre hub (not a button) */
+    .dpad-hub {
+      grid-column: 2; grid-row: 2;
+      width: 62px; height: 62px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.05);
+      border: 2px solid rgba(255,255,255,0.1);
+    }
+
+    /* Coloured action buttons */
+    #btn-fire    { border-color: #e74c3c55; }
+    #btn-mine    { border-color: #f39c1255; }
+    #btn-missile { border-color: #9b59b655; }
+    #btn-fire.pressed    { background: rgba(231,76,60,0.4);  border-color: #e74c3c; }
+    #btn-mine.pressed    { background: rgba(243,156,18,0.4); border-color: #f39c12; }
+    #btn-missile.pressed { background: rgba(155,89,182,0.4); border-color: #9b59b6; }
+
+    /* Landscape-only hint overlay when in portrait on mobile */
+    #portrait-warn {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #000;
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      font-size: 20px;
+      color: #aaa;
+      text-align: center;
+      padding: 24px;
+    }
+    #portrait-warn .icon { font-size: 60px; }
   </style>
 </head>
 <body>
 
+<!-- Portrait mode warning (touch only) -->
+<div id="portrait-warn">
+  <div class="icon">📱↔️</div>
+  <div>Please rotate your device<br>to landscape to play</div>
+</div>
+
 <!-- Name entry screen -->
 <div id="name-screen">
   <h1>TANK BATTLE</h1>
-  <p>Multiplayer arena — open this page in multiple browser tabs to play together</p>
-  <input id="name-input" type="text" maxlength="16" placeholder="Your callsign" value="">
+  <p>Multiplayer arena — open in multiple tabs or devices</p>
+  <input id="name-input" type="text" maxlength="16" placeholder="Your callsign"
+         autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   <button id="join-btn">JOIN BATTLE</button>
   <div class="key-hint">
     <span>W</span> Forward &nbsp;
@@ -136,19 +293,24 @@
     <span>A</span> Rotate Left &nbsp;
     <span>X</span> Rotate Right &nbsp;
     <span>SPACE</span> Fire &nbsp;
-    <span>C</span> Lay Mine &nbsp;
-    <span>Q</span> Launch Missile &nbsp;
-    <span>M</span> Mute/Unmute
+    <span>C</span> Mine &nbsp;
+    <span>Q</span> Missile &nbsp;
+    <span>M</span> Mute
   </div>
 </div>
 
 <!-- Game view -->
 <div id="game-wrap">
+
+  <!-- Desktop HUD bar -->
   <div id="top-bar">
     <div id="my-status">Connecting...</div>
     <div id="controls-hint">W/S Move &bull; A/X Rotate &bull; SPACE Fire &bull; C Mine &bull; Q Missile &bull; M Mute</div>
-    <button id="mute-btn" onclick="voiceMuted=!voiceMuted;Voice.setMuted(voiceMuted)" style="font-family:'Courier New',monospace;font-size:12px;background:#196319;color:#eee;border:1px solid #555;padding:3px 12px;cursor:pointer;border-radius:4px;">🎤 Live</button>
+    <button id="mute-btn" onclick="voiceMuted=!voiceMuted;Voice.setMuted(voiceMuted)"
+            style="font-family:'Courier New',monospace;font-size:12px;background:#196319;color:#eee;border:1px solid #555;padding:3px 12px;cursor:pointer;border-radius:4px;">🎤 Live</button>
   </div>
+
+  <!-- Canvas -->
   <div id="canvas-wrap">
     <canvas id="canvas" width="1200" height="800"></canvas>
     <div id="overlay">
@@ -158,7 +320,38 @@
       </div>
     </div>
   </div>
-</div>
+
+  <!-- Mobile controls (shown only on touch devices) -->
+  <div id="mobile-controls">
+
+    <!-- D-pad (left thumb) -->
+    <div id="dpad">
+      <button class="ctrl-btn" id="btn-up"    data-action="forward">▲</button>
+      <button class="ctrl-btn" id="btn-left"  data-action="rotateLeft">◀</button>
+      <div class="dpad-hub"></div>
+      <button class="ctrl-btn" id="btn-right" data-action="rotateRight">▶</button>
+      <button class="ctrl-btn" id="btn-down"  data-action="backward">▼</button>
+    </div>
+
+    <!-- Action buttons (right thumb) -->
+    <div id="action-btns">
+      <button class="ctrl-btn" id="btn-fire"    data-action="fire">
+        🔥<span class="lbl">FIRE</span>
+      </button>
+      <button class="ctrl-btn" id="btn-mine"    data-action="mine">
+        💣<span class="lbl">MINE</span>
+      </button>
+      <button class="ctrl-btn" id="btn-missile" data-action="missile">
+        🚀<span class="lbl">MSL</span>
+      </button>
+    </div>
+
+    <!-- Mute (top-right) -->
+    <button id="mobile-mute" onclick="voiceMuted=!voiceMuted;Voice.setMuted(voiceMuted)">🎤 Live</button>
+
+  </div><!-- /mobile-controls -->
+
+</div><!-- /game-wrap -->
 
 <script src="voice.js"></script>
 <script src="game.js"></script>

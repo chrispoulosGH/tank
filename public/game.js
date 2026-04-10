@@ -29,6 +29,62 @@ const KEY_MAP = {
   'q': 'missile'
 };
 
+// ─── Mobile / viewport ───────────────────────────────────────────────────────
+
+const isTouch = () => ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+function fitCanvas() {
+  const W = worldW || 1200, H = worldH || 800;
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.style.width  = Math.floor(W * scale) + 'px';
+  canvas.style.height = Math.floor(H * scale) + 'px';
+}
+
+function checkPortrait() {
+  const warn = document.getElementById('portrait-warn');
+  if (!warn) return;
+  const portrait = window.innerHeight > window.innerWidth;
+  warn.style.display = (isTouch() && portrait) ? 'flex' : 'none';
+}
+
+function setupTouchControls() {
+  document.getElementById('mobile-controls').style.display = 'block';
+
+  // Wire every [data-action] button
+  document.querySelectorAll('[data-action]').forEach(btn => {
+    const action = btn.dataset.action;
+    const press = () => { keys[action] = true;  btn.classList.add('pressed'); };
+    const release = () => { keys[action] = false; btn.classList.remove('pressed'); };
+    btn.addEventListener('touchstart',  e => { press();   e.preventDefault(); }, { passive: false });
+    btn.addEventListener('touchend',    e => { release(); e.preventDefault(); }, { passive: false });
+    btn.addEventListener('touchcancel', e => { release(); }, { passive: false });
+    // Also support mouse (desktop testing of the buttons)
+    btn.addEventListener('mousedown',  press);
+    btn.addEventListener('mouseup',    release);
+    btn.addEventListener('mouseleave', release);
+  });
+
+  // Sync mobile mute button label with desktop one
+  const mobileMute = document.getElementById('mobile-mute');
+  if (mobileMute) {
+    const origSetMuted = Voice.setMuted.bind(Voice);
+    Voice.setMuted = (v) => {
+      origSetMuted(v);
+      mobileMute.textContent = v ? '🎤 Muted' : '🎤 Live';
+      mobileMute.style.background = v ? '#922' : '#196319';
+    };
+  }
+
+  // Prevent browser scroll/zoom during gameplay
+  document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+  // Try to lock landscape
+  try { screen.orientation.lock('landscape').catch(() => {}); } catch (_) {}
+}
+
+window.addEventListener('resize',            () => { fitCanvas(); checkPortrait(); });
+window.addEventListener('orientationchange', () => { fitCanvas(); checkPortrait(); });
+
 let voiceMuted = false;
 window.addEventListener('keydown', e => {
   if (e.key.toLowerCase() === 'm') {
@@ -63,6 +119,9 @@ function joinGame() {
   const name = document.getElementById('name-input').value.trim() || 'Tank';
   document.getElementById('name-screen').style.display = 'none';
   document.getElementById('game-wrap').style.display = 'flex';
+  if (isTouch()) setupTouchControls();
+  fitCanvas();
+  checkPortrait();
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}`);
@@ -80,6 +139,7 @@ function joinGame() {
       obstacles = msg.obstacles || [];
       canvas.width = worldW;
       canvas.height = worldH;
+      fitCanvas();
       Voice.init(ws, myId, msg.peers || []);
     } else if (msg.type === 'state') {
       gameState = msg;
