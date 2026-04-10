@@ -1,0 +1,566 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const WebSocket = require('ws');
+
+const PORT = process.env.PORT || 3000;
+const WORLD_W = 1200;
+const WORLD_H = 800;
+const TANK_SPEED = 3;
+const ROTATE_SPEED = 0.05;
+const BULLET_SPEED = 10;
+const BULLET_RADIUS = 5;
+const TANK_RADIUS = 20;
+const BULLET_DAMAGE = 25;
+const FIRE_COOLDOWN_TICKS = 20;
+const RESPAWN_DELAY_TICKS = 90;
+const BULLET_LIFETIME_TICKS = 80;
+const TICK_RATE = 1000 / 30;
+const COLLISION_DAMAGE = Math.round(BULLET_DAMAGE / 3); // ≈ 8 HP per ram
+const MAX_MINES = 5;
+const MINE_RADIUS = 14;
+const MINE_ARMING_TICKS = 45;
+const MINE_COOLDOWN_TICKS = 20;
+const MINE_DAMAGE = 100;
+const ROUND_DURATION_TICKS  = 180 * 30;
+const BETWEEN_ROUND_TICKS   = 6  * 30;
+const MATCH_OVER_TICKS      = 10 * 30;
+const ROUNDS_TO_WIN_MATCH   = 3;
+const MISSILE_SPEED         = 6;            // px per tick
+const MISSILE_TURN_RATE     = 0.07;         // radians per tick — limits how tightly it curves
+const MISSILE_LIFETIME      = 10 * 30;      // 10 seconds before self-destruct
+const MISSILE_BLAST_RADIUS  = Math.round(Math.sqrt(WORLD_W * WORLD_H * 0.05 / Math.PI)); // ≈124 px
+
+const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css' };
+
+// ─── Obstacle generation ──────────────────────────────────────────────────────
+
+// Obstacles are axis-aligned rectangles stored as centre (x,y) + half-extents (w,h).
+function generateObstacles() {
+  const obs = [];
+
+  function overlaps(c) {
+    for (const o of obs) {
+      if (Math.abs(o.x - c.x) < (o.w + c.w) / 2 + 30 &&
+          Math.abs(o.y - c.y) < (o.h + c.h) / 2 + 30) return true;
+    }
+    return false;
+  }
+
+  function place(orientation, count) {
+    for (let i = 0; i < count; i++) {
+      for (let attempt = 0; attempt < 80; attempt++) {
+        const long  = 120 + Math.random() * 130;  // 120–250 px
+        const short = 28  + Math.random() * 20;   // 28–48 px
+        const c = {
+          type: 'hedge',
+          orientation,
+          w: orientation === 'horizontal' ? long : short,
+          h: orientation === 'horizontal' ? short : long,
+          x: 100 + Math.random() * (WORLD_W - 200),
+          y: 100 + Math.random() * (WORLD_H - 200)
+        };
+        if (!overlaps(c)) { obs.push(c); break; }
+      }
+    }
+  }
+
+  place('horizontal', 6);
+  place('vertical',   6);
+  return obs;
+}
+
+const obstacles = generateObstacles();
+
+// Circle vs AABB (centre-based rect)
+function circleVsRect(cx, cy, cr, o) {
+  const nearX = Math.max(o.x - o.w / 2, Math.min(cx, o.x + o.w / 2));
+  const nearY = Math.max(o.y - o.h / 2, Math.min(cy, o.y + o.h / 2));
+  const dx = cx - nearX, dy = cy - nearY;
+  return dx * dx + dy * dy < cr * cr;
+}
+
+function tankCollidesWithObstacle(x, y) {
+  for (const o of obstacles) {
+    if (circleVsRect(x, y, TANK_RADIUS, o)) return true;
+  }
+  return false;
+}
+
+function bulletHitsObstacle(x, y) {
+  for (const o of obstacles) {
+    if (circleVsRect(x, y, BULLET_RADIUS, o)) return true;
+  }
+  return false;
+}
+
+// HTTP static file server
+const httpServer = http.createServer((req, res) => {
+  let urlPath = req.url.split('?')[0];
+  if (urlPath === '/') urlPath = '/index.html';
+  // Sanitize: strip directory traversal, only allow known filenames
+  const parts = urlPath.split('/').filter(p => p && p !== '..' && p !== '.');
+  const filePath = path.join(__dirname, 'public', ...parts);
+  fs.readFile(filePath, (err, data) => {
+    if (err) { res.writeHead(404); res.end('Not found'); return; }
+    const ext = path.extname(filePath);
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'text/plain' });
+    res.end(data);
+  });
+});
+
+const wss = new WebSocket.Server({ server: httpServer });
+
+const activeCollisions = new Set(); // "minId|maxId" pairs currently overlapping
+function pairKey(a, b) { return a < b ? `${a}|${b}` : `${b}|${a}`; }
+
+function handleTankCollisions() {
+  const alive = Array.from(players.values()).filter(p => p.alive);
+  const current = new Set();
+
+  for (let i = 0; i < alive.length; i++) {
+    for (let j = i + 1; j < alive.length; j++) {
+      const a = alive[i], b = alive[j];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const distSq = dx * dx + dy * dy;
+      const minDist = TANK_RADIUS * 2;
+
+      if (distSq > 0 && distSq < minDist * minDist) {
+        const dist = Math.sqrt(distSq);
+        const key  = pairKey(a.id, b.id);
+        current.add(key);
+
+        // Push tanks apart along the collision normal
+        const overlap = (minDist - dist) / 2;
+        const nx = dx / dist, ny = dy / dist;
+        const aOk = !tankCollidesWithObstacle(a.x - nx * overlap, a.y - ny * overlap);
+        const bOk = !tankCollidesWithObstacle(b.x + nx * overlap, b.y + ny * overlap);
+        if (aOk) { a.x -= nx * overlap; a.y -= ny * overlap; }
+        if (bOk) { b.x += nx * overlap; b.y += ny * overlap; }
+        // If one is wall-blocked, give full push to the other
+        if (aOk && !bOk && !tankCollidesWithObstacle(a.x - nx * overlap, a.y - ny * overlap)) {
+          a.x -= nx * overlap; a.y -= ny * overlap;
+        }
+        if (bOk && !aOk && !tankCollidesWithObstacle(b.x + nx * overlap, b.y + ny * overlap)) {
+          b.x += nx * overlap; b.y += ny * overlap;
+        }
+
+        // Damage only on the first tick of contact
+        if (!activeCollisions.has(key)) {
+          a.hp -= COLLISION_DAMAGE;
+          b.hp -= COLLISION_DAMAGE;
+          if (a.hp <= 0) { a.alive = false; a.respawnTimer = RESPAWN_DELAY_TICKS; }
+          if (b.hp <= 0) { b.alive = false; b.respawnTimer = RESPAWN_DELAY_TICKS; }
+        }
+      }
+    }
+  }
+
+  activeCollisions.clear();
+  for (const k of current) activeCollisions.add(k);
+}
+
+let players      = new Map();
+let bullets      = [];
+let mines        = [];
+let missiles     = [];
+let nextPlayerId = 1;
+let nextBulletId = 1;
+let nextMineId   = 1;
+let nextMissileId = 1;
+
+// ─── Round state ──────────────────────────────────────────────────────────────
+let roundNumber   = 1;
+let roundTicksLeft = ROUND_DURATION_TICKS;
+let roundPhase    = 'active';   // 'active' | 'between' | 'match_over'
+let pauseTicks    = 0;
+let roundWins     = new Map();  // playerId -> round wins
+let roundHistory  = [];         // [{num, winnerId, winnerName, color}]
+let matchWinnerId = null;
+
+function respawnAll() {
+  for (const [, p] of players) {
+    const s = randomSpawn();
+    p.x = s.x; p.y = s.y; p.angle = s.angle;
+    p.hp = 100; p.alive = true; p.minesLeft = MAX_MINES; p.missileReady = true;
+    p.fireCooldown = 0; p.mineCooldown = 0;
+  }
+  bullets = []; mines = []; missiles = [];
+}
+
+function endRound() {
+  // Find highest scorer
+  let winner = null;
+  for (const [, p] of players) {
+    if (!winner || p.score > winner.score) winner = p;
+  }
+
+  if (winner && winner.score > 0) {
+    const wins = (roundWins.get(winner.id) || 0) + 1;
+    roundWins.set(winner.id, wins);
+    roundHistory.push({ num: roundNumber, winnerId: winner.id, winnerName: winner.name, color: winner.color });
+
+    if (wins >= ROUNDS_TO_WIN_MATCH) {
+      matchWinnerId = winner.id;
+      roundPhase = 'match_over';
+      pauseTicks  = MATCH_OVER_TICKS;
+      return;
+    }
+  } else {
+    // Draw — no round winner, still record it
+    roundHistory.push({ num: roundNumber, winnerId: null, winnerName: 'Draw', color: '#888' });
+  }
+
+  roundPhase = 'between';
+  pauseTicks  = BETWEEN_ROUND_TICKS;
+}
+
+function startNextRound() {
+  roundNumber++;
+  roundTicksLeft = ROUND_DURATION_TICKS;
+  roundPhase = 'active';
+  for (const [, p] of players) p.score = 0;
+  respawnAll();
+}
+
+function resetMatch() {
+  roundNumber   = 1;
+  roundTicksLeft = ROUND_DURATION_TICKS;
+  roundPhase    = 'active';
+  pauseTicks    = 0;
+  roundWins.clear();
+  roundHistory  = [];
+  matchWinnerId = null;
+  for (const [, p] of players) p.score = 0;
+  respawnAll();
+}
+
+function tickRound() {
+  if (roundPhase === 'active') {
+    roundTicksLeft--;
+    if (roundTicksLeft <= 0) endRound();
+  } else {
+    pauseTicks--;
+    if (pauseTicks <= 0) {
+      if (roundPhase === 'match_over') resetMatch();
+      else startNextRound();
+    }
+  }
+}
+
+const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#e91e63'];
+
+function randomSpawn() {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const x = 60 + Math.random() * (WORLD_W - 120);
+    const y = 60 + Math.random() * (WORLD_H - 120);
+    if (!tankCollidesWithObstacle(x, y)) return { x, y, angle: Math.random() * Math.PI * 2 };
+  }
+  // Fallback to centre if all attempts fail
+  return { x: WORLD_W / 2, y: WORLD_H / 2, angle: 0 };
+}
+
+function createPlayer(id, ws) {
+  const spawn = randomSpawn();
+  return {
+    id,
+    ws,
+    name: `Player ${id}`,
+    color: PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length],
+    x: spawn.x,
+    y: spawn.y,
+    angle: spawn.angle,
+    hp: 100,
+    score: 0,
+    alive: true,
+    respawnTimer: 0,
+    fireCooldown: 0,
+    minesLeft: MAX_MINES,
+    mineCooldown: 0,
+    missileReady: true,
+    input: { forward: false, backward: false, rotateLeft: false, rotateRight: false, fire: false, mine: false, missile: false }
+  };
+}
+
+function tick() {
+  tickRound();
+
+  // Freeze gameplay between rounds / after match
+  if (roundPhase !== 'active') {
+    broadcastState();
+    return;
+  }
+
+  // Process players
+  for (const [, p] of players) {
+    if (!p.alive) {
+      p.respawnTimer--;
+      if (p.respawnTimer <= 0) {
+        const spawn = randomSpawn();
+        p.alive = true;
+        p.hp = 100;
+        p.x = spawn.x;
+        p.y = spawn.y;
+        p.angle = spawn.angle;
+      }
+      continue;
+    }
+
+    const inp = p.input;
+    if (inp.rotateLeft)  p.angle -= ROTATE_SPEED;
+    if (inp.rotateRight) p.angle += ROTATE_SPEED;
+    p.angle = ((p.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+
+    let nx = p.x, ny = p.y;
+    if (inp.forward)  { nx += Math.cos(p.angle) * TANK_SPEED; ny += Math.sin(p.angle) * TANK_SPEED; }
+    if (inp.backward) { nx -= Math.cos(p.angle) * TANK_SPEED; ny -= Math.sin(p.angle) * TANK_SPEED; }
+    nx = Math.max(TANK_RADIUS, Math.min(WORLD_W - TANK_RADIUS, nx));
+    ny = Math.max(TANK_RADIUS, Math.min(WORLD_H - TANK_RADIUS, ny));
+    if (!tankCollidesWithObstacle(nx, ny)) { p.x = nx; p.y = ny; }
+
+    if (p.fireCooldown > 0) p.fireCooldown--;
+    if (inp.fire && p.fireCooldown === 0) {
+      bullets.push({
+        id: nextBulletId++,
+        ownerId: p.id,
+        x: p.x + Math.cos(p.angle) * (TANK_RADIUS + 5),
+        y: p.y + Math.sin(p.angle) * (TANK_RADIUS + 5),
+        angle: p.angle,
+        life: BULLET_LIFETIME_TICKS
+      });
+      p.fireCooldown = FIRE_COOLDOWN_TICKS;
+    }
+
+    if (p.mineCooldown > 0) p.mineCooldown--;
+    if (inp.mine && p.mineCooldown === 0 && p.minesLeft > 0) {
+      mines.push({
+        id: nextMineId++,
+        ownerId: p.id,
+        color: p.color,
+        x: p.x,
+        y: p.y,
+        armedTimer: MINE_ARMING_TICKS
+      });
+      p.minesLeft--;
+      p.mineCooldown = MINE_COOLDOWN_TICKS;
+    }
+
+    if (inp.missile && p.missileReady && p.alive) {
+      // Find closest alive enemy
+      let target = null, bestDist = Infinity;
+      for (const [, other] of players) {
+        if (other.id === p.id || !other.alive) continue;
+        const dx = other.x - p.x, dy = other.y - p.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; target = other; }
+      }
+      if (target) {
+        missiles.push({
+          id: nextMissileId++, ownerId: p.id, targetId: target.id,
+          x: p.x + Math.cos(p.angle) * (TANK_RADIUS + 12),
+          y: p.y + Math.sin(p.angle) * (TANK_RADIUS + 12),
+          vx: Math.cos(p.angle) * MISSILE_SPEED,
+          vy: Math.sin(p.angle) * MISSILE_SPEED,
+          angle: p.angle,
+          life: MISSILE_LIFETIME
+        });
+        p.missileReady = false;
+      }
+    }
+  }
+
+  handleTankCollisions();
+
+  // Update bullets and check collisions
+  bullets = bullets.filter(b => {
+    b.x += Math.cos(b.angle) * BULLET_SPEED;
+    b.y += Math.sin(b.angle) * BULLET_SPEED;
+    b.life--;
+
+    if (b.life <= 0 || b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H) return false;
+    if (bulletHitsObstacle(b.x, b.y)) return false;
+
+    for (const [, p] of players) {
+      if (p.id === b.ownerId || !p.alive) continue;
+      const dx = p.x - b.x;
+      const dy = p.y - b.y;
+      if (dx * dx + dy * dy < (TANK_RADIUS + BULLET_RADIUS) ** 2) {
+        p.hp -= BULLET_DAMAGE;
+        if (p.hp <= 0) {
+          p.alive = false;
+          p.respawnTimer = RESPAWN_DELAY_TICKS;
+          const shooter = players.get(b.ownerId);
+          if (shooter) shooter.score++;
+        }
+        return false;
+      }
+    }
+    return true;
+  });
+
+  // Update mines
+  mines = mines.filter(m => {
+    if (m.armedTimer > 0) { m.armedTimer--; return true; }
+    for (const [, p] of players) {
+      if (p.id === m.ownerId || !p.alive) continue;
+      const dx = p.x - m.x, dy = p.y - m.y;
+      if (dx * dx + dy * dy < (MINE_RADIUS + TANK_RADIUS) ** 2) {
+        p.hp -= MINE_DAMAGE;
+        if (p.hp <= 0) {
+          p.alive = false;
+          p.respawnTimer = RESPAWN_DELAY_TICKS;
+          const layer = players.get(m.ownerId);
+          if (layer) layer.score++;
+        }
+        return false; // mine consumed
+      }
+    }
+    return true;
+  });
+
+  // Update missiles (velocity-steered with limited turn rate)
+  missiles = missiles.filter(m => {
+    // Lifetime check
+    m.life--;
+    if (m.life <= 0) return false;
+
+    // Re-target if current target gone/dead
+    let tgt = players.get(m.targetId);
+    if (!tgt || !tgt.alive) {
+      let best = null, bestD = Infinity;
+      for (const [, p] of players) {
+        if (p.id === m.ownerId || !p.alive) continue;
+        const dx = p.x - m.x, dy = p.y - m.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = p; }
+      }
+      if (!best) return false;
+      m.targetId = best.id;
+      tgt = best;
+    }
+
+    // Steer toward target with limited turn rate (creates the arc)
+    const desired = Math.atan2(tgt.y - m.y, tgt.x - m.x);
+    let diff = desired - m.angle;
+    // Wrap to [-π, π]
+    while (diff >  Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    m.angle += Math.sign(diff) * Math.min(Math.abs(diff), MISSILE_TURN_RATE);
+
+    // Proximity check — explode when close enough
+    const dx = tgt.x - m.x, dy = tgt.y - m.y;
+    if (dx * dx + dy * dy <= (MISSILE_SPEED + 6) ** 2) {
+      const owner = players.get(m.ownerId);
+      for (const [, p] of players) {
+        if (!p.alive) continue;
+        const bx = p.x - tgt.x, by = p.y - tgt.y;
+        if (Math.sqrt(bx * bx + by * by) <= MISSILE_BLAST_RADIUS) {
+          p.hp = 0; p.alive = false; p.respawnTimer = RESPAWN_DELAY_TICKS;
+          if (p.id !== m.ownerId && owner) owner.score++;
+        }
+      }
+      return false;
+    }
+
+    // Advance along current heading
+    m.vx = Math.cos(m.angle) * MISSILE_SPEED;
+    m.vy = Math.sin(m.angle) * MISSILE_SPEED;
+    m.x += m.vx;
+    m.y += m.vy;
+    return true;
+  });
+
+  broadcastState();
+}
+
+function broadcastState() {
+  const state = JSON.stringify({
+    type: 'state',
+    players: Array.from(players.values()).map(p => ({
+      id: p.id, name: p.name, color: p.color,
+      x: p.x, y: p.y, angle: p.angle,
+      hp: p.hp, score: p.score, alive: p.alive,
+      respawnTimer: p.respawnTimer, minesLeft: p.minesLeft,
+      missileReady: p.missileReady,
+      roundWins: roundWins.get(p.id) || 0
+    })),
+    bullets: bullets.map(b => ({ id: b.id, x: b.x, y: b.y, ownerId: b.ownerId })),
+    mines:    mines.map(m => ({ id: m.id, x: m.x, y: m.y, color: m.color, armed: m.armedTimer === 0 })),
+    missiles: missiles.map(m => ({ id: m.id, x: m.x, y: m.y, angle: m.angle })),
+    round: {
+      number:        roundNumber,
+      ticksLeft:     roundTicksLeft,
+      phase:         roundPhase,
+      pauseTicks,
+      history:       roundHistory,
+      matchWinnerId
+    }
+  });
+
+  for (const [, p] of players) {
+    if (p.ws.readyState === WebSocket.OPEN) p.ws.send(state);
+  }
+}
+
+wss.on('connection', ws => {
+  const id = nextPlayerId++;
+  const player = createPlayer(id, ws);
+  players.set(id, player);
+
+  ws.send(JSON.stringify({
+    type: 'init', id, worldW: WORLD_W, worldH: WORLD_H, obstacles,
+    peers: Array.from(players.keys()).filter(pid => pid !== id)
+  }));
+
+  // Tell existing players a new peer joined (for WebRTC)
+  for (const [pid, p] of players) {
+    if (pid !== id && p.ws.readyState === WebSocket.OPEN)
+      p.ws.send(JSON.stringify({ type: 'peer_joined', id }));
+  }
+
+  ws.on('message', raw => {
+    try {
+      const msg = JSON.parse(raw);
+      if (!players.has(id)) return;
+      const p = players.get(id);
+
+      if (msg.type === 'input') {
+        p.input.forward    = !!msg.forward;
+        p.input.backward   = !!msg.backward;
+        p.input.rotateLeft = !!msg.rotateLeft;
+        p.input.rotateRight= !!msg.rotateRight;
+        p.input.fire       = !!msg.fire;
+        p.input.mine       = !!msg.mine;
+        p.input.missile    = !!msg.missile;
+      } else if (msg.type === 'name' && typeof msg.name === 'string') {
+        p.name = msg.name.trim().substring(0, 16) || `Player ${id}`;
+      } else if (msg.type === 'rtc_offer' || msg.type === 'rtc_answer' || msg.type === 'rtc_ice') {
+        // Relay WebRTC signaling to target player
+        const target = players.get(msg.to);
+        if (target && target.ws.readyState === WebSocket.OPEN)
+          target.ws.send(JSON.stringify({ ...msg, from: id, to: undefined }));
+      } else if (msg.type === 'speaking') {
+        // Relay speaking state to all other players
+        const payload = JSON.stringify({ type: 'speaking', id, speaking: !!msg.speaking });
+        for (const [pid, op] of players) {
+          if (pid !== id && op.ws.readyState === WebSocket.OPEN) op.ws.send(payload);
+        }
+      }
+    } catch (_) {}
+  });
+
+  ws.on('close', () => {
+    players.delete(id);
+    // Tell remaining players this peer left (for WebRTC cleanup)
+    for (const [, p] of players) {
+      if (p.ws.readyState === WebSocket.OPEN)
+        p.ws.send(JSON.stringify({ type: 'peer_left', id }));
+    }
+  });
+});
+
+setInterval(tick, TICK_RATE);
+
+httpServer.listen(PORT, () => {
+  console.log(`Tank Battle running at http://localhost:${PORT}`);
+});

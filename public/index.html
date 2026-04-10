@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tank Battle</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d0d0d;
+      color: #eee;
+      font-family: 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      user-select: none;
+    }
+
+    /* --- Name Screen --- */
+    #name-screen {
+      text-align: center;
+      padding: 40px;
+    }
+    #name-screen h1 {
+      font-size: 56px;
+      letter-spacing: 8px;
+      color: #f39c12;
+      text-shadow: 0 0 20px #f39c12aa;
+      margin-bottom: 8px;
+    }
+    #name-screen p {
+      color: #888;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+    #name-input {
+      font-family: 'Courier New', monospace;
+      font-size: 20px;
+      padding: 10px 16px;
+      border-radius: 6px;
+      border: 2px solid #444;
+      background: #1a1a1a;
+      color: #eee;
+      width: 280px;
+      text-align: center;
+      outline: none;
+    }
+    #name-input:focus { border-color: #f39c12; }
+    #join-btn {
+      display: block;
+      margin: 16px auto 0;
+      font-family: 'Courier New', monospace;
+      font-size: 18px;
+      font-weight: bold;
+      padding: 12px 40px;
+      border-radius: 6px;
+      border: none;
+      background: #e74c3c;
+      color: white;
+      cursor: pointer;
+      letter-spacing: 2px;
+      transition: background 0.15s;
+    }
+    #join-btn:hover { background: #c0392b; }
+    .key-hint {
+      margin-top: 32px;
+      color: #555;
+      font-size: 13px;
+      line-height: 2;
+    }
+    .key-hint span {
+      display: inline-block;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 1px 7px;
+      margin: 2px;
+      color: #aaa;
+    }
+
+    /* --- Game --- */
+    #game-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+    }
+    #top-bar {
+      width: 1200px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      font-size: 13px;
+      color: #777;
+    }
+    #my-status { color: #eee; }
+    #controls-hint { font-size: 12px; }
+    #canvas-wrap { position: relative; }
+    canvas {
+      display: block;
+      border: 2px solid #333;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+    #respawn-box {
+      background: rgba(0,0,0,0.8);
+      border: 2px solid #e74c3c;
+      border-radius: 10px;
+      padding: 24px 40px;
+      text-align: center;
+      display: none;
+    }
+    #respawn-box h2 { color: #e74c3c; font-size: 28px; letter-spacing: 4px; }
+    #respawn-count { font-size: 40px; margin-top: 8px; color: #f39c12; }
+  </style>
+</head>
+<body>
+
+<!-- Name entry screen -->
+<div id="name-screen">
+  <h1>TANK BATTLE</h1>
+  <p>Multiplayer arena — open this page in multiple browser tabs to play together</p>
+  <input id="name-input" type="text" maxlength="16" placeholder="Your callsign" value="">
+  <button id="join-btn">JOIN BATTLE</button>
+  <div class="key-hint">
+    <span>W</span> Forward &nbsp;
+    <span>S</span> Backward &nbsp;
+    <span>A</span> Rotate Left &nbsp;
+    <span>X</span> Rotate Right &nbsp;
+    <span>SPACE</span> Fire &nbsp;
+    <span>C</span> Lay Mine &nbsp;
+    <span>Q</span> Launch Missile &nbsp;
+    <span>M</span> Mute/Unmute
+  </div>
+</div>
+
+<!-- Game view -->
+<div id="game-wrap">
+  <div id="top-bar">
+    <div id="my-status">Connecting...</div>
+    <div id="controls-hint">W/S Move &bull; A/X Rotate &bull; SPACE Fire &bull; C Mine &bull; Q Missile &bull; M Mute</div>
+    <button id="mute-btn" onclick="voiceMuted=!voiceMuted;Voice.setMuted(voiceMuted)" style="font-family:'Courier New',monospace;font-size:12px;background:#196319;color:#eee;border:1px solid #555;padding:3px 12px;cursor:pointer;border-radius:4px;">🎤 Live</button>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="canvas" width="1200" height="800"></canvas>
+    <div id="overlay">
+      <div id="respawn-box">
+        <h2>DESTROYED</h2>
+        <div id="respawn-count">3</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="voice.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
