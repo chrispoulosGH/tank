@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const QRCode = require('qrcode');
 
 const PORT = process.env.PORT || 3000;
 const WORLD_W = 1200;
@@ -97,6 +98,20 @@ function bulletHitsObstacle(x, y) {
 // HTTP static file server
 const httpServer = http.createServer((req, res) => {
   let urlPath = req.url.split('?')[0];
+
+  // QR code endpoint — generates a PNG QR code for the given URL
+  if (urlPath === '/api/qr') {
+    const params = new URLSearchParams(req.url.split('?')[1] || '');
+    const target = params.get('url') || '';
+    if (!target) { res.writeHead(400); res.end('Missing url param'); return; }
+    QRCode.toBuffer(target, { type: 'png', width: 160, margin: 1 }, (err, buf) => {
+      if (err) { res.writeHead(500); res.end('QR error'); return; }
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public,max-age=3600' });
+      res.end(buf);
+    });
+    return;
+  }
+
   if (urlPath === '/') urlPath = '/index.html';
   // Sanitize: strip directory traversal, only allow known filenames
   const parts = urlPath.split('/').filter(p => p && p !== '..' && p !== '.');
