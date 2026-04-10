@@ -284,6 +284,10 @@
 <div id="name-screen">
   <h1>TANK BATTLE</h1>
   <p>Multiplayer arena — open in multiple tabs or devices</p>
+  <div id="qr-wrap" style="margin:12px auto 0;display:flex;flex-direction:column;align-items:center;gap:6px;">
+    <canvas id="qr-code" width="120" height="120" style="border:3px solid #333;border-radius:6px;background:#fff;"></canvas>
+    <div style="font-size:10px;color:#555;letter-spacing:1px;">SCAN TO JOIN ON PHONE</div>
+  </div>
   <input id="name-input" type="text" maxlength="16" placeholder="Your callsign"
          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   <button id="join-btn">JOIN BATTLE</button>
@@ -353,6 +357,17 @@
 
 </div><!-- /game-wrap -->
 
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script>
+  // Generate QR code for this page's URL on the join screen
+  (function() {
+    const canvas = document.getElementById('qr-code');
+    const url = location.href.replace(/\/$/, '');
+    if (typeof QRCode !== 'undefined') {
+      QRCode.toCanvas(canvas, url, { width: 120, margin: 1, color: { dark: '#111', light: '#fff' } });
+    }
+  })();
+</script>
 <script src="voice.js"></script>
 <script src="game.js"></script>
 </body>

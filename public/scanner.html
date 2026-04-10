@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Scan to Join</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: #0d0d0d;
+      color: #eee;
+      font-family: 'Courier New', monospace;
+      height: 100%;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 16px;
+      padding: 16px;
+    }
+    h1 {
+      font-size: clamp(18px, 5vw, 28px);
+      letter-spacing: 4px;
+      color: #f39c12;
+      text-shadow: 0 0 16px #f39c12aa;
+    }
+    #status {
+      font-size: 13px;
+      color: #777;
+      min-height: 18px;
+    }
+    #video-wrap {
+      position: relative;
+      width: min(360px, 90vw);
+      height: min(360px, 90vw);
+      border-radius: 12px;
+      overflow: hidden;
+      border: 2px solid #333;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    /* Scanning reticle */
+    #reticle {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    #reticle::before, #reticle::after {
+      content: '';
+      position: absolute;
+      width: 50px;
+      height: 50px;
+      border-color: #f39c12;
+      border-style: solid;
+    }
+    #reticle::before { top: 18px; left: 18px; border-width: 3px 0 0 3px; border-radius: 4px 0 0 0; }
+    #reticle::after  { bottom: 18px; right: 18px; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
+    .corner { position: absolute; width: 50px; height: 50px; border-color: #f39c12; border-style: solid; }
+    #c-tr { top: 18px;    right: 18px;  border-width: 3px 3px 0 0; border-radius: 0 4px 0 0; }
+    #c-bl { bottom: 18px; left: 18px;   border-width: 0 0 3px 3px; border-radius: 0 0 0 4px; }
+    /* Scan line animation */
+    #scan-line {
+      position: absolute;
+      left: 18px; right: 18px;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #f39c12, transparent);
+      animation: scan 2s ease-in-out infinite;
+      box-shadow: 0 0 8px #f39c12;
+    }
+    @keyframes scan {
+      0%   { top: 22px; opacity: 0; }
+      10%  { opacity: 1; }
+      90%  { opacity: 1; }
+      100% { top: calc(100% - 22px); opacity: 0; }
+    }
+
+    /* Result box */
+    #result-box {
+      display: none;
+      background: rgba(0,0,0,0.92);
+      border: 2px solid #27ae60;
+      border-radius: 10px;
+      padding: 20px 24px;
+      text-align: center;
+      max-width: min(400px, 92vw);
+      width: 100%;
+    }
+    #result-box h2 { color: #27ae60; font-size: 16px; letter-spacing: 3px; margin-bottom: 10px; }
+    #result-link {
+      word-break: break-all;
+      color: #f39c12;
+      font-size: 14px;
+      margin-bottom: 14px;
+      display: block;
+    }
+    #go-btn {
+      display: inline-block;
+      font-family: 'Courier New', monospace;
+      font-size: 16px;
+      font-weight: bold;
+      padding: 12px 36px;
+      border-radius: 6px;
+      border: none;
+      background: #e74c3c;
+      color: white;
+      cursor: pointer;
+      letter-spacing: 2px;
+      text-decoration: none;
+      margin: 4px;
+    }
+    #scan-again-btn {
+      display: inline-block;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      padding: 10px 20px;
+      border-radius: 6px;
+      border: 1px solid #555;
+      background: #1a1a1a;
+      color: #aaa;
+      cursor: pointer;
+      letter-spacing: 1px;
+      margin: 4px;
+    }
+
+    #no-support {
+      display: none;
+      color: #e74c3c;
+      text-align: center;
+      font-size: 14px;
+      max-width: 300px;
+    }
+  </style>
+</head>
+<body>
+
+<h1>📷 SCAN TO JOIN</h1>
+<div id="status">Starting camera…</div>
+
+<div id="video-wrap">
+  <video id="video" playsinline muted autoplay></video>
+  <div id="reticle">
+    <div class="corner" id="c-tr"></div>
+    <div class="corner" id="c-bl"></div>
+    <div id="scan-line"></div>
+  </div>
+</div>
+
+<div id="result-box">
+  <h2>✓ QR CODE FOUND</h2>
+  <span id="result-link"></span>
+  <div>
+    <a id="go-btn" href="#">OPEN LINK</a>
+    <button id="scan-again-btn" onclick="scanAgain()">Scan Again</button>
+  </div>
+</div>
+
+<div id="no-support">
+  Your browser does not support camera access or QR scanning.<br><br>
+  Try Chrome or Safari on a modern device.
+</div>
+
+<canvas id="qr-canvas" style="display:none"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script>
+'use strict';
+
+const video      = document.getElementById('video');
+const qrCanvas   = document.getElementById('qr-canvas');
+const qrCtx      = qrCanvas.getContext('2d', { willReadFrequently: true });
+const statusEl   = document.getElementById('status');
+const resultBox  = document.getElementById('result-box');
+const resultLink = document.getElementById('result-link');
+const goBtn      = document.getElementById('go-btn');
+const noSupport  = document.getElementById('no-support');
+const videoWrap  = document.getElementById('video-wrap');
+
+let scanning = true;
+let rafId    = null;
+let stream   = null;
+
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showNoSupport(); return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    statusEl.textContent = 'Point camera at a QR code…';
+    rafId = requestAnimationFrame(tick);
+  } catch (err) {
+    statusEl.textContent = 'Camera error: ' + err.message;
+    showNoSupport();
+  }
+}
+
+function tick() {
+  if (!scanning) return;
+  if (video.readyState !== video.HAVE_ENOUGH_DATA) { rafId = requestAnimationFrame(tick); return; }
+
+  qrCanvas.width  = video.videoWidth;
+  qrCanvas.height = video.videoHeight;
+  qrCtx.drawImage(video, 0, 0, qrCanvas.width, qrCanvas.height);
+  const imageData = qrCtx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+
+  const code = jsQR(imageData.data, imageData.width, imageData.height, {
+    inversionAttempts: 'dontInvert'
+  });
+
+  if (code && code.data) {
+    onQRFound(code.data);
+  } else {
+    rafId = requestAnimationFrame(tick);
+  }
+}
+
+function onQRFound(data) {
+  scanning = false;
+  cancelAnimationFrame(rafId);
+
+  // Check if it looks like a URL
+  let url = data;
+  const isUrl = /^https?:\/\//i.test(url) || /^[a-z0-9.-]+\.[a-z]{2,}/i.test(url);
+  if (isUrl && !/^https?:\/\//i.test(url)) url = 'http://' + url;
+
+  statusEl.textContent = '';
+  videoWrap.style.display = 'none';
+  resultLink.textContent = url;
+  goBtn.href = url;
+  resultBox.style.display = 'block';
+
+  // Vibrate to confirm (mobile)
+  if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+}
+
+function scanAgain() {
+  resultBox.style.display = 'none';
+  videoWrap.style.display = 'block';
+  statusEl.textContent = 'Point camera at a QR code…';
+  scanning = true;
+  rafId = requestAnimationFrame(tick);
+}
+
+function showNoSupport() {
+  videoWrap.style.display = 'none';
+  noSupport.style.display = 'block';
+}
+
+startCamera();
+</script>
+</body>
+</html>
