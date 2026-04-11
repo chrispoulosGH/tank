@@ -660,9 +660,10 @@ wss.on('connection', ws => {
       } else if (msg.type === 'name' && typeof msg.name === 'string') {
         p.name = msg.name.trim().substring(0, 16) || `Player ${id}`;
         // Single-player: spawn AI bots owned by this player
-        if (msg.bots && Number.isInteger(msg.bots) && msg.bots >= 1) {
-          const count = Math.min(msg.bots, 5);
+        if (msg.bots && msg.bots >= 1) {
+          const count = Math.min(Math.floor(msg.bots), 5);
           const diff  = ['easy', 'medium', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'medium';
+          console.log(`[SP] Player ${id} "${p.name}" spawning ${count} ${diff} bots`);
           for (let i = 0; i < count; i++) {
             const botId = nextPlayerId++;
             players.set(botId, createBot(botId, id, diff, i));
@@ -677,7 +678,7 @@ wss.on('connection', ws => {
         // Relay speaking state to all other players
         const payload = JSON.stringify({ type: 'speaking', id, speaking: !!msg.speaking });
         for (const [pid, op] of players) {
-          if (pid !== id && op.ws.readyState === WebSocket.OPEN) op.ws.send(payload);
+          if (pid !== id && !op.isBot && op.ws && op.ws.readyState === WebSocket.OPEN) op.ws.send(payload);
         }
       }
     } catch (_) {}

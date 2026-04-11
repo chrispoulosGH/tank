@@ -417,10 +417,13 @@
     document.getElementById('qr-code').src = '/api/qr?url=' + encodeURIComponent(url);
   })();
 
-  // Mode / bot selection UI
-  window.gameMode   = 'multi';
+  // Mode / bot selection UI — default to single player
+  window.gameMode   = 'solo';
   window.botCount   = 1;
   window.botDiff    = 'medium';
+  document.getElementById('tab-solo').classList.add('active');
+  document.getElementById('tab-multi').classList.remove('active');
+  document.getElementById('solo-opts').style.display = 'block';
 
   window.setMode = function(mode) {
     window.gameMode = mode;
