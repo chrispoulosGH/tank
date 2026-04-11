@@ -546,6 +546,41 @@ function tickBotAI(bot) {
   const feelers = botFeelers(bot, cfg);
   const { fwdBlocked, leftBlocked, rightBlocked } = feelers;
 
+  // ── Air strike evasion (highest priority — run perpendicular to jet path) ──
+  for (const a of airStrikes) {
+    if (a.x > bot.x + 60) continue;              // jet already passed
+    if (Math.abs(bot.y - a.y) >= MISSILE_BLAST_RADIUS) continue; // not in path
+    // Sprint perpendicular to jet (change Y) to escape blast radius
+    const escapeAngle = bot.y >= a.y ? Math.PI / 2 : -Math.PI / 2;
+    const wd = normAngle(escapeAngle - bot.angle);
+    inp.rotateRight = wd >  0.12;
+    inp.rotateLeft  = wd < -0.12;
+    inp.forward  = !fwdBlocked;
+    if (fwdBlocked) { inp.forward = false; inp.backward = true; }
+    bot.botWasTryingToMove = true;
+    return;
+  }
+
+  // ── Incoming missile evasion — steer perpendicular to approach vector ───
+  // Does NOT return early: bot keeps firing while evading
+  let missileEvading = false;
+  let missileEvasionAngle = 0;
+  for (const m of missiles) {
+    if (m.targetId !== bot.id) continue;
+    const mDist = Math.hypot(bot.x - m.x, bot.y - m.y);
+    if (mDist > 320) continue;    // not close enough to react yet
+    // Perpendicular to the missile's approach vector
+    const approach = Math.atan2(bot.y - m.y, bot.x - m.x);
+    const perpL = normAngle(approach - Math.PI / 2);
+    const perpR = normAngle(approach + Math.PI / 2);
+    // Pick the side that stays within world bounds
+    const exL = bot.x + Math.cos(perpL) * 90, eyL = bot.y + Math.sin(perpL) * 90;
+    const inBoundsL = exL > 50 && exL < WORLD_W - 50 && eyL > 50 && eyL < WORLD_H - 50;
+    missileEvasionAngle = inBoundsL ? perpL : perpR;
+    missileEvading = true;
+    break;
+  }
+
   // ── Wander / escape override ─────────────────────────────────────────────
   if (bot.botWanderTimer > 0) {
     bot.botWanderTimer--;
@@ -611,9 +646,11 @@ function tickBotAI(bot) {
     }
 
     if (!dodging) {
+      // ── Missile evasion overrides normal movement (bot still fires) ───
+      if (missileEvading) {
+        steerToward(bot, missileEvasionAngle, inp, feelers);
       // ── Cover / retreat (medium when HP is low) ───────────────────────
-      const retreating = cfg.seekCover && bot.hp <= cfg.retreatHp;
-      if (retreating) {
+      } else if (cfg.seekCover && bot.hp <= cfg.retreatHp) {
         const coverAngle = nearestObstacleAngle(bot);
         if (nearObstacle(bot.x, bot.y, TANK_RADIUS + 28)) {
           inp.rotateRight = diff >  0.08;
