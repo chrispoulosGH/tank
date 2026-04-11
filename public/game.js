@@ -1105,30 +1105,32 @@ function drawBlastEffects(dt) {
 
 function drawScoreboard(players, round) {
   const sorted = [...players].sort((a, b) => (b.roundWins ?? 0) - (a.roundWins ?? 0) || b.score - a.score);
-  const lineH = 19;
-  const padX = 10;
-  const padY = 10;
-  const w = 210;
-  const h = padY * 2 + lineH * 2 + sorted.length * lineH;
-  const sx = worldW - w - 10;
-  const sy = 10;
+  // On touch/mobile the canvas is scaled down ~0.49×, so boost fonts so they read at ~14px on screen
+  const fs    = isTouch() ? 2.2 : 1;
+  const lineH = Math.round(19 * fs);
+  const padX  = 10;
+  const padY  = 10;
+  const w     = Math.round(210 * fs);
+  const h     = padY * 2 + lineH * 2 + sorted.length * lineH;
+  const sx    = worldW - w - 10;
+  const sy    = 10;
 
   ctx.fillStyle = 'rgba(0,0,0,0.68)';
   roundRect(sx, sy, w, h, 6);
   ctx.fill();
 
-  ctx.font = 'bold 12px Courier New';
+  ctx.font = `bold ${Math.round(12 * fs)}px Courier New`;
   ctx.fillStyle = '#f39c12';
   ctx.textAlign = 'left';
-  ctx.fillText('SCOREBOARD', sx + padX, sy + padY + 10);
+  ctx.fillText('SCOREBOARD', sx + padX, sy + padY + Math.round(10 * fs));
 
   // Column headers
-  ctx.font = '10px Courier New';
+  ctx.font = `${Math.round(10 * fs)}px Courier New`;
   ctx.fillStyle = '#777';
-  ctx.fillText('PLAYER', sx + padX, sy + padY + 26);
+  ctx.fillText('PLAYER', sx + padX, sy + padY + Math.round(26 * fs));
   ctx.textAlign = 'center';
-  ctx.fillText('KILLS', sx + w - 46, sy + padY + 26);
-  ctx.fillText('WINS', sx + w - padX - 4, sy + padY + 26);
+  ctx.fillText('KILLS', sx + w - Math.round(46 * fs), sy + padY + Math.round(26 * fs));
+  ctx.fillText('WINS', sx + w - padX - 4, sy + padY + Math.round(26 * fs));
   ctx.textAlign = 'left';
 
   sorted.forEach((p, i) => {
@@ -1136,7 +1138,7 @@ function drawScoreboard(players, round) {
     const isMe = p.id === myId;
     const wins = p.roundWins ?? 0;
 
-    ctx.font = isMe ? 'bold 11px Courier New' : '11px Courier New';
+    ctx.font = isMe ? `bold ${Math.round(11 * fs)}px Courier New` : `${Math.round(11 * fs)}px Courier New`;
     ctx.fillStyle = p.alive ? p.color : '#555';
     // Truncate long names
     const name = p.name.length > 10 ? p.name.slice(0, 9) + '…' : p.name;
@@ -1144,7 +1146,7 @@ function drawScoreboard(players, round) {
 
     ctx.fillStyle = isMe ? '#fff' : '#aaa';
     ctx.textAlign = 'center';
-    ctx.fillText(p.score, sx + w - 46, y);
+    ctx.fillText(p.score, sx + w - Math.round(46 * fs), y);
 
     // Round wins as filled stars
     ctx.fillStyle = wins >= 3 ? '#f1c40f' : '#aaa';
