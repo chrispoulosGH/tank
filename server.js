@@ -279,24 +279,29 @@ const BOT_NAMES = ['Rusty', 'Blaze', 'Shadow', 'Viper', 'Thunder', 'Ghost', 'Hav
 const BOT_CFG = {
   easy: {
     lookFwd: 62,  lookSide: 48,  stuckThresh: 22,
-    fireAngleTol: 0.55,   // fires when roughly aimed (~31°)
-    retreatHp: 0,  seekCover: false,
+    fireAngleTol: 0.55,
+    retreatHp: 0, seekCover: false,
     mineStrategy: 'random',    mineChance: 0.003,
     missileStrategy: 'random', missileChance: 0.004,
+    predictShots: false, bulletAware: false, optimalRange: 0,
   },
   medium: {
     lookFwd: 90,  lookSide: 65,  stuckThresh: 12,
-    fireAngleTol: 0.22,   // fires when well aimed (~13°)
+    fireAngleTol: 0.22,
     retreatHp: 25, seekCover: true,
-    mineStrategy: 'pursuit',        mineChance: 0.005,
+    mineStrategy: 'pursuit',          mineChance: 0.005,
     missileStrategy: 'opportunistic', missileChance: 0.007,
+    predictShots: false, bulletAware: false, optimalRange: 0,
   },
   hard: {
-    lookFwd: 120, lookSide: 82,  stuckThresh: 7,
-    fireAngleTol: 0.10,   // fires only when precisely aimed (~6°)
-    retreatHp: 45, seekCover: true,
-    mineStrategy: 'chokepoint',     mineChance: 0.007,
-    missileStrategy: 'opportunistic', missileChance: 0.013,
+    lookFwd: 130, lookSide: 90,  stuckThresh: 4,
+    fireAngleTol: 0.16,
+    retreatHp: 0, seekCover: false,       // constant aggression, never hides
+    mineStrategy: 'chokepoint', mineChance: 0.018,
+    missileStrategy: 'opportunistic', missileChance: 0.025,
+    predictShots: true,   // leads bullets based on tracked target velocity
+    bulletAware: true,    // detects and dodges incoming bullets
+    optimalRange: 300,    // holds preferred engagement distance
   },
 };
 
@@ -316,6 +321,7 @@ function createBot(id, ownerId, difficulty, nameIdx) {
     botWanderTimer: 0,
     botPrevX: spawn.x, botPrevY: spawn.y,
     botStuckTimer: 0, botWasTryingToMove: false,
+    botTargetPrev: null,   // previous target position for shot prediction
     input: { forward: false, backward: false, rotateLeft: false, rotateRight: false, fire: false, mine: false, missile: false }
   };
 }
@@ -399,6 +405,31 @@ function enemyChasing(bot, target) {
   return Math.abs(normAngle(angleToBot - target.angle)) < 0.6;
 }
 
+// Returns true if bullet b will come within 'threshold' px of (x,y).
+function bulletThreatens(b, x, y, threshold) {
+  const vx = Math.cos(b.angle) * BULLET_SPEED;
+  const vy = Math.sin(b.angle) * BULLET_SPEED;
+  const dx = x - b.x, dy = y - b.y;
+  const t = (dx * vx + dy * vy) / (vx * vx + vy * vy);
+  if (t < 0 || t > BULLET_LIFETIME_TICKS) return false;
+  const cx = b.x + vx * t - x, cy = b.y + vy * t - y;
+  return cx * cx + cy * cy < threshold * threshold;
+}
+
+// Aim angle that leads the target based on its observed velocity.
+// bot.botTargetPrev must be maintained across ticks.
+function predictedAimAngle(bot, target) {
+  let vx = 0, vy = 0;
+  if (bot.botTargetPrev && bot.botTargetPrev.id === target.id) {
+    vx = target.x - bot.botTargetPrev.x;
+    vy = target.y - bot.botTargetPrev.y;
+  }
+  bot.botTargetPrev = { id: target.id, x: target.x, y: target.y };
+  const dist = Math.hypot(target.x - bot.x, target.y - bot.y);
+  const lead = dist / BULLET_SPEED;
+  return Math.atan2((target.y + vy * lead) - bot.y, (target.x + vx * lead) - bot.x);
+}
+
 // Steer toward a desired angle; apply obstacle avoidance if forward is blocked.
 function steerToward(bot, desiredAngle, inp, feelers) {
   const { fwdBlocked, leftBlocked, rightBlocked } = feelers;
@@ -465,46 +496,92 @@ function tickBotAI(bot) {
   }
 
   if (target) {
-    const dist    = Math.sqrt(bestDist);
+    const dist     = Math.sqrt(bestDist);
     const toTarget = Math.atan2(target.y - bot.y, target.x - bot.x);
-    const diff     = normAngle(toTarget - bot.angle);
 
-    // ── Cover / retreat (medium + hard when HP is low) ───────────────────
-    const retreating = cfg.seekCover && bot.hp <= cfg.retreatHp;
-    if (retreating) {
-      // Move toward nearest obstacle for cover; still face and fire at enemy
-      const coverAngle = nearestObstacleAngle(bot);
-      // If already behind cover, hold position and fire
-      if (nearObstacle(bot.x, bot.y, TANK_RADIUS + 28)) {
-        // Hold — just rotate to face enemy and shoot
-        inp.rotateRight = diff >  0.08;
-        inp.rotateLeft  = diff < -0.08;
-      } else {
-        steerToward(bot, coverAngle, inp, feelers);
-      }
-      // Lay a mine while retreating to discourage pursuit
-      if (bot.minesLeft > 0 && Math.random() < cfg.mineChance * 2) inp.mine = true;
+    // Aim angle: hard bots lead the shot; others aim directly
+    const aimAngle = cfg.predictShots ? predictedAimAngle(bot, target) : toTarget;
+    const diff     = normAngle(aimAngle - bot.angle);
 
-    } else {
-      // ── Normal chase / engage ─────────────────────────────────────────
-      if (dist > TANK_RADIUS * 3.5 && fwdBlocked) {
-        // Obstacle in the way — steer around it
-        if (!rightBlocked)     { inp.rotateRight = true; }
-        else if (!leftBlocked) { inp.rotateLeft  = true; }
-        else {
-          inp.backward = true;
-          bot.botWander     = bot.angle + Math.PI + (Math.random() - 0.5) * 1.2;
-          bot.botWanderTimer = 20 + Math.floor(Math.random() * 20);
+    // ── Bullet-in-motion awareness (hard) ────────────────────────────────
+    // Scan all live bullets; if one will pass close, dodge perpendicular to it
+    let dodging = false;
+    if (cfg.bulletAware) {
+      for (const b of bullets) {
+        if (b.ownerId === bot.id) continue;
+        if (bulletThreatens(b, bot.x, bot.y, TANK_RADIUS * 2.8)) {
+          // Dodge: turn toward whichever perpendicular side is clear
+          const perpL = normAngle(b.angle - Math.PI / 2 - bot.angle);
+          const perpR = normAngle(b.angle + Math.PI / 2 - bot.angle);
+          const dodgeAngle = (!leftBlocked && Math.abs(perpL) < Math.abs(perpR))
+            ? bot.angle - Math.PI / 2
+            : bot.angle + Math.PI / 2;
+          steerToward(bot, dodgeAngle, inp, feelers);
+          dodging = true;
+          break;
         }
-      } else {
-        inp.rotateRight = diff >  0.08;
-        inp.rotateLeft  = diff < -0.08;
-        inp.forward     = dist > TANK_RADIUS * 3.5;
       }
     }
 
-    // ── Fire ─────────────────────────────────────────────────────────────
-    if (Math.abs(diff) < cfg.fireAngleTol) inp.fire = true;
+    if (!dodging) {
+      // ── Cover / retreat (medium when HP is low) ───────────────────────
+      const retreating = cfg.seekCover && bot.hp <= cfg.retreatHp;
+      if (retreating) {
+        const coverAngle = nearestObstacleAngle(bot);
+        if (nearObstacle(bot.x, bot.y, TANK_RADIUS + 28)) {
+          inp.rotateRight = diff >  0.08;
+          inp.rotateLeft  = diff < -0.08;
+        } else {
+          steerToward(bot, coverAngle, inp, feelers);
+        }
+        if (bot.minesLeft > 0 && Math.random() < cfg.mineChance * 2) inp.mine = true;
+
+      } else if (cfg.optimalRange) {
+        // ── Hard: maintain optimal engagement range ───────────────────
+        const lo = cfg.optimalRange * 0.65, hi = cfg.optimalRange * 1.5;
+        if (dist < lo) {
+          // Too close — back away while keeping aim
+          inp.rotateRight = diff >  0.08;
+          inp.rotateLeft  = diff < -0.08;
+          inp.backward    = true;
+        } else if (dist > hi) {
+          // Too far — close in, navigate around obstacles
+          if (fwdBlocked) {
+            if (!rightBlocked)     inp.rotateRight = true;
+            else if (!leftBlocked) inp.rotateLeft  = true;
+            else { inp.backward = true; bot.botWander = bot.angle + Math.PI; bot.botWanderTimer = 20; }
+          } else {
+            inp.rotateRight = diff >  0.08;
+            inp.rotateLeft  = diff < -0.08;
+            inp.forward = true;
+          }
+        } else {
+          // In optimal range — face target, inch forward to maintain pressure
+          inp.rotateRight = diff >  0.08;
+          inp.rotateLeft  = diff < -0.08;
+          if (dist > lo * 1.15 && !fwdBlocked) inp.forward = true;
+        }
+
+      } else {
+        // ── Easy / medium: direct chase ───────────────────────────────
+        if (dist > TANK_RADIUS * 3.5 && fwdBlocked) {
+          if (!rightBlocked)     { inp.rotateRight = true; }
+          else if (!leftBlocked) { inp.rotateLeft  = true; }
+          else {
+            inp.backward = true;
+            bot.botWander     = bot.angle + Math.PI + (Math.random() - 0.5) * 1.2;
+            bot.botWanderTimer = 20 + Math.floor(Math.random() * 20);
+          }
+        } else {
+          inp.rotateRight = diff >  0.08;
+          inp.rotateLeft  = diff < -0.08;
+          inp.forward     = dist > TANK_RADIUS * 3.5;
+        }
+      }
+    }
+
+    // ── Fire (suppress while dodging so bot doesn't waste shots) ─────────
+    if (!dodging && Math.abs(diff) < cfg.fireAngleTol) inp.fire = true;
 
     // ── Mines ─────────────────────────────────────────────────────────────
     if (bot.minesLeft > 0 && Math.random() < cfg.mineChance) {
