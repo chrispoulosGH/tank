@@ -289,17 +289,113 @@ function createBot(id, ownerId, difficulty, nameIdx) {
     // Bot-only state
     botWander: Math.random() * Math.PI * 2,
     botWanderTimer: 0,
-    botPrevX: spawn.x, botPrevY: spawn.y, botStuckTimer: 0,
+    botPrevX: spawn.x, botPrevY: spawn.y,
+    botStuckTimer: 0, botWasTryingToMove: false,
     input: { forward: false, backward: false, rotateLeft: false, rotateRight: false, fire: false, mine: false, missile: false }
   };
 }
+
+// Ray vs AABB (slab method). AABB expanded by TANK_RADIUS for clearance.
+function rayVsAABB(ox, oy, dx, dy, length, o) {
+  const minX = o.x - o.w / 2 - TANK_RADIUS;
+  const maxX = o.x + o.w / 2 + TANK_RADIUS;
+  const minY = o.y - o.h / 2 - TANK_RADIUS;
+  const maxY = o.y + o.h / 2 + TANK_RADIUS;
+  let tMin = 0, tMax = length;
+  if (Math.abs(dx) < 1e-8) { if (ox < minX || ox > maxX) return false; }
+  else {
+    const t1 = (minX - ox) / dx, t2 = (maxX - ox) / dx;
+    tMin = Math.max(tMin, Math.min(t1, t2));
+    tMax = Math.min(tMax, Math.max(t1, t2));
+    if (tMin > tMax) return false;
+  }
+  if (Math.abs(dy) < 1e-8) { if (oy < minY || oy > maxY) return false; }
+  else {
+    const t1 = (minY - oy) / dy, t2 = (maxY - oy) / dy;
+    tMin = Math.max(tMin, Math.min(t1, t2));
+    tMax = Math.min(tMax, Math.max(t1, t2));
+    if (tMin > tMax) return false;
+  }
+  return true;
+}
+
+// Three forward-facing feelers: centre, left-45°, right-45°.
+// Also checks world boundary proximity.
+function botFeelers(bot) {
+  const LOOK_FWD  = 95;
+  const LOOK_SIDE = 70;
+  const SIDE_ANG  = Math.PI / 4;
+  const WALL_PAD  = TANK_RADIUS + 12;
+
+  const fwd = bot.angle;
+  const cdx = Math.cos(fwd), cdy = Math.sin(fwd);
+  const ldx = Math.cos(fwd - SIDE_ANG), ldy = Math.sin(fwd - SIDE_ANG);
+  const rdx = Math.cos(fwd + SIDE_ANG), rdy = Math.sin(fwd + SIDE_ANG);
+
+  let fwdBlocked = false, leftBlocked = false, rightBlocked = false;
+
+  for (const o of obstacles) {
+    if (!fwdBlocked   && rayVsAABB(bot.x, bot.y, cdx, cdy, LOOK_FWD,  o)) fwdBlocked   = true;
+    if (!leftBlocked  && rayVsAABB(bot.x, bot.y, ldx, ldy, LOOK_SIDE, o)) leftBlocked  = true;
+    if (!rightBlocked && rayVsAABB(bot.x, bot.y, rdx, rdy, LOOK_SIDE, o)) rightBlocked = true;
+  }
+
+  // World walls
+  const fx = bot.x + cdx * LOOK_FWD, fy = bot.y + cdy * LOOK_FWD;
+  if (fx < WALL_PAD || fx > WORLD_W - WALL_PAD || fy < WALL_PAD || fy > WORLD_H - WALL_PAD)
+    fwdBlocked = true;
+
+  return { fwdBlocked, leftBlocked, rightBlocked };
+}
+
+function normAngle(a) { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; }
 
 function tickBotAI(bot) {
   if (!bot.alive) return;
   const cfg = BOT_CFG[bot.difficulty] || BOT_CFG.medium;
   const inp = bot.input;
 
-  // Find closest alive enemy
+  // Reset inputs
+  inp.fire = inp.mine = inp.missile = false;
+  inp.forward = inp.backward = inp.rotateLeft = inp.rotateRight = false;
+
+  // Stuck detection: position barely moved despite trying to move last tick
+  const moved = (bot.x - bot.botPrevX) ** 2 + (bot.y - bot.botPrevY) ** 2;
+  if (bot.botWasTryingToMove && moved < 0.5) {
+    bot.botStuckTimer++;
+    if (bot.botStuckTimer > 12) {
+      // Escape: turn 90° and drive briefly
+      bot.botWander = bot.angle + (Math.random() > 0.5 ? Math.PI / 2 : -Math.PI / 2)
+                      + (Math.random() - 0.5) * 0.6;
+      bot.botWanderTimer = 35 + Math.floor(Math.random() * 25);
+      bot.botStuckTimer  = 0;
+    }
+  } else {
+    bot.botStuckTimer = 0;
+  }
+  bot.botPrevX = bot.x; bot.botPrevY = bot.y;
+
+  // Obstacle feelers
+  const { fwdBlocked, leftBlocked, rightBlocked } = botFeelers(bot);
+
+  // ── Wander override (avoidance / unstuck) ─────────────────────────────────
+  if (bot.botWanderTimer > 0) {
+    bot.botWanderTimer--;
+    const wd = normAngle(bot.botWander - bot.angle);
+    if (Math.abs(wd) > 0.12) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
+    else                      { inp.forward = !fwdBlocked; }
+    // Re-test feelers even during wander to avoid entering a new hedgerow
+    if (fwdBlocked) {
+      inp.forward = false;
+      if (!rightBlocked) inp.rotateRight = true;
+      else if (!leftBlocked) inp.rotateLeft = true;
+      else { inp.backward = true; }
+    }
+    bot.botWasTryingToMove = inp.forward || inp.backward;
+    return;
+  }
+
+  // ── Find closest alive enemy ───────────────────────────────────────────────
   let target = null, bestDist = Infinity;
   for (const [, p] of players) {
     if (p.id === bot.id || !p.alive) continue;
@@ -308,65 +404,58 @@ function tickBotAI(bot) {
     if (d < bestDist) { bestDist = d; target = p; }
   }
 
-  inp.fire = inp.mine = inp.missile = false;
-  inp.forward = inp.backward = inp.rotateLeft = inp.rotateRight = false;
-
-  // Detect stuck (tried to move but didn't)
-  const moved = (bot.x - bot.botPrevX) ** 2 + (bot.y - bot.botPrevY) ** 2;
-  if (moved < 0.1 && inp.forward) {
-    bot.botStuckTimer++;
-    if (bot.botStuckTimer > 15) {
-      bot.botWander = Math.random() * Math.PI * 2;
-      bot.botWanderTimer = 30 + Math.floor(Math.random() * 30);
-      bot.botStuckTimer = 0;
-    }
-  } else {
-    bot.botStuckTimer = 0;
-  }
-  bot.botPrevX = bot.x; bot.botPrevY = bot.y;
-
-  if (bot.botWanderTimer > 0) {
-    // Wander override (unstuck)
-    bot.botWanderTimer--;
-    let wd = bot.botWander - bot.angle;
-    while (wd >  Math.PI) wd -= Math.PI * 2;
-    while (wd < -Math.PI) wd += Math.PI * 2;
-    if (Math.abs(wd) > 0.15) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
-    inp.forward = true;
-    return;
-  }
-
   if (target) {
     const dist = Math.sqrt(bestDist);
 
-    // Aim with noise proportional to difficulty
-    const rawAngle = Math.atan2(target.y - bot.y, target.x - bot.x);
-    const aimAngle = rawAngle + (Math.random() - 0.5) * cfg.aimError;
-    let diff = aimAngle - bot.angle;
-    while (diff >  Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
+    // Aim (with difficulty-based noise)
+    const aimAngle = Math.atan2(target.y - bot.y, target.x - bot.x)
+                     + (Math.random() - 0.5) * cfg.aimError;
+    const diff = normAngle(aimAngle - bot.angle);
 
-    inp.rotateRight = diff > 0.08;
-    inp.rotateLeft  = diff < -0.08;
-    inp.forward = dist > TANK_RADIUS * 3.5;
+    const wantForward = dist > TANK_RADIUS * 3.5;
 
+    if (wantForward && fwdBlocked) {
+      // Obstacle in the way — steer around it
+      if (!rightBlocked)      { inp.rotateRight = true; }
+      else if (!leftBlocked)  { inp.rotateLeft  = true; }
+      else {
+        // Cornered — back up and pick a new escape direction
+        inp.backward = true;
+        bot.botWander     = bot.angle + Math.PI + (Math.random() - 0.5) * 1.2;
+        bot.botWanderTimer = 20 + Math.floor(Math.random() * 20);
+      }
+    } else {
+      // Normal chase steering
+      inp.rotateRight = diff > 0.08;
+      inp.rotateLeft  = diff < -0.08;
+      inp.forward     = wantForward;
+    }
+
+    // Weapons
     if (Math.abs(diff) < 0.28 && dist < cfg.fireRange) inp.fire = true;
-    if (cfg.mineChance   > 0 && bot.minesLeft > 0      && Math.random() < cfg.mineChance)   inp.mine    = true;
-    if (cfg.missileChance > 0 && bot.missileReady       && Math.random() < cfg.missileChance) inp.missile = true;
+    if (cfg.mineChance    > 0 && bot.minesLeft > 0  && Math.random() < cfg.mineChance)    inp.mine    = true;
+    if (cfg.missileChance > 0 && bot.missileReady   && Math.random() < cfg.missileChance) inp.missile = true;
 
   } else {
-    // No targets — wander
-    bot.botWanderTimer--;
-    if (bot.botWanderTimer <= 0) {
-      bot.botWander = Math.random() * Math.PI * 2;
+    // No targets — wander randomly
+    if (--bot.botWanderTimer <= 0) {
+      bot.botWander     = Math.random() * Math.PI * 2;
       bot.botWanderTimer = 90 + Math.floor(Math.random() * 60);
     }
-    let wd = bot.botWander - bot.angle;
-    while (wd >  Math.PI) wd -= Math.PI * 2;
-    while (wd < -Math.PI) wd += Math.PI * 2;
+    const wd = normAngle(bot.botWander - bot.angle);
     if (Math.abs(wd) > 0.15) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
     inp.forward = true;
+
+    // Avoid obstacles even while wandering
+    if (fwdBlocked) {
+      inp.forward = false;
+      if (!rightBlocked)     inp.rotateRight = true;
+      else if (!leftBlocked) inp.rotateLeft  = true;
+      else                   { inp.backward = true; bot.botWanderTimer = 12; }
+    }
   }
+
+  bot.botWasTryingToMove = inp.forward || inp.backward;
 }
 
 function randomSpawn() {
