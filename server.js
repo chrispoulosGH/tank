@@ -418,6 +418,36 @@ function botFeelers(bot, cfg) {
   return { fwdBlocked, leftBlocked, rightBlocked };
 }
 
+// Returns true if the straight line from (ax,ay) to (bx,by) is not blocked by any hedgerow.
+// Uses raw obstacle bounds (bullet-width clearance, no tank-radius expansion).
+function hasLineOfSight(ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const dist = Math.hypot(dx, dy);
+  if (dist === 0) return true;
+  const nx = dx / dist, ny = dy / dist;
+  for (const o of obstacles) {
+    const minX = o.x - o.w / 2, maxX = o.x + o.w / 2;
+    const minY = o.y - o.h / 2, maxY = o.y + o.h / 2;
+    let tMin = 0, tMax = dist;
+    if (Math.abs(nx) < 1e-8) { if (ax < minX || ax > maxX) continue; }
+    else {
+      const t1 = (minX - ax) / nx, t2 = (maxX - ax) / nx;
+      tMin = Math.max(tMin, Math.min(t1, t2));
+      tMax = Math.min(tMax, Math.max(t1, t2));
+      if (tMin > tMax) continue;
+    }
+    if (Math.abs(ny) < 1e-8) { if (ay < minY || ay > maxY) continue; }
+    else {
+      const t1 = (minY - ay) / ny, t2 = (maxY - ay) / ny;
+      tMin = Math.max(tMin, Math.min(t1, t2));
+      tMax = Math.min(tMax, Math.max(t1, t2));
+      if (tMin > tMax) continue;
+    }
+    return false; // blocked
+  }
+  return true;
+}
+
 // Returns direction angle toward the nearest obstacle (for cover seeking).
 function nearestObstacleAngle(bot) {
   let best = Infinity, angle = 0;
@@ -544,6 +574,7 @@ function tickBotAI(bot) {
   if (target) {
     const dist     = Math.sqrt(bestDist);
     const toTarget = Math.atan2(target.y - bot.y, target.x - bot.x);
+    const los      = hasLineOfSight(bot.x, bot.y, target.x, target.y);
 
     // ── Adaptive learning: sample human player behaviour (hard only) ─────
     let model = null;
@@ -599,7 +630,10 @@ function tickBotAI(bot) {
           ? cfg.optimalRange * (0.75 + model.isRusher * 0.55)  // 0.75–1.3×
           : cfg.optimalRange;
         const lo = adaptedRange * 0.65, hi = adaptedRange * 1.5;
-        if (dist < lo) {
+        if (!los) {
+          // No line of sight — manoeuvre around the hedgerow to find a clear shot
+          steerToward(bot, toTarget, inp, feelers);
+        } else if (dist < lo) {
           // Too close — back away while keeping aim
           inp.rotateRight = diff >  0.08;
           inp.rotateLeft  = diff < -0.08;
@@ -616,7 +650,7 @@ function tickBotAI(bot) {
             inp.forward = true;
           }
         } else {
-          // In optimal range — face target, inch forward to maintain pressure
+          // In optimal range with clear shot — face target, inch forward to maintain pressure
           inp.rotateRight = diff >  0.08;
           inp.rotateLeft  = diff < -0.08;
           if (dist > lo * 1.15 && !fwdBlocked) inp.forward = true;
@@ -624,7 +658,8 @@ function tickBotAI(bot) {
 
       } else {
         // ── Easy / medium: direct chase ───────────────────────────────
-        if (dist > TANK_RADIUS * 3.5 && fwdBlocked) {
+        // If hedgerow is blocking LOS, close in aggressively to clear it
+        if (!los || (dist > TANK_RADIUS * 3.5 && fwdBlocked)) {
           if (!rightBlocked)     { inp.rotateRight = true; }
           else if (!leftBlocked) { inp.rotateLeft  = true; }
           else {
@@ -632,6 +667,7 @@ function tickBotAI(bot) {
             bot.botWander     = bot.angle + Math.PI + (Math.random() - 0.5) * 1.2;
             bot.botWanderTimer = 20 + Math.floor(Math.random() * 20);
           }
+          if (!fwdBlocked) inp.forward = true;
         } else {
           inp.rotateRight = diff >  0.08;
           inp.rotateLeft  = diff < -0.08;
@@ -640,8 +676,8 @@ function tickBotAI(bot) {
       }
     }
 
-    // ── Fire (suppress while dodging so bot doesn't waste shots) ─────────
-    if (!dodging && Math.abs(diff) < cfg.fireAngleTol) inp.fire = true;
+    // ── Fire — only when aimed and hedgerow is not blocking the shot ─────
+    if (!dodging && Math.abs(diff) < cfg.fireAngleTol && los) inp.fire = true;
 
     // ── Mines ─────────────────────────────────────────────────────────────
     if (bot.minesLeft > 0 && Math.random() < cfg.mineChance) {
