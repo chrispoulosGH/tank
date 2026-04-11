@@ -269,10 +269,35 @@ const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#
 
 const BOT_NAMES = ['Rusty', 'Blaze', 'Shadow', 'Viper', 'Thunder', 'Ghost', 'Havoc', 'Storm'];
 
+// Difficulty now controls BEHAVIOUR only — all bots have full player capabilities.
+// lookFwd/lookSide: feeler distances (longer = earlier obstacle detection = smoother nav)
+// stuckThresh: ticks before declaring stuck (lower = quicker recovery)
+// fireAngleTol: angle error (rad) within which bot fires (smaller = waits for better shot)
+// retreatHp: HP threshold to seek cover; 0 = never retreat
+// mineStrategy: 'random' | 'pursuit' (lays in chaser's path) | 'chokepoint' (near hedges)
+// missileStrategy: 'random' | 'opportunistic' (fires when enemy is in the open)
 const BOT_CFG = {
-  easy:   { aimError: 0.50, fireRange: 280, mineChance: 0,     missileChance: 0     },
-  medium: { aimError: 0.22, fireRange: 500, mineChance: 0.004, missileChance: 0.006 },
-  hard:   { aimError: 0.05, fireRange: 900, mineChance: 0.007, missileChance: 0.014 }
+  easy: {
+    lookFwd: 62,  lookSide: 48,  stuckThresh: 22,
+    fireAngleTol: 0.55,   // fires when roughly aimed (~31°)
+    retreatHp: 0,  seekCover: false,
+    mineStrategy: 'random',    mineChance: 0.003,
+    missileStrategy: 'random', missileChance: 0.004,
+  },
+  medium: {
+    lookFwd: 90,  lookSide: 65,  stuckThresh: 12,
+    fireAngleTol: 0.22,   // fires when well aimed (~13°)
+    retreatHp: 25, seekCover: true,
+    mineStrategy: 'pursuit',        mineChance: 0.005,
+    missileStrategy: 'opportunistic', missileChance: 0.007,
+  },
+  hard: {
+    lookFwd: 120, lookSide: 82,  stuckThresh: 7,
+    fireAngleTol: 0.10,   // fires only when precisely aimed (~6°)
+    retreatHp: 45, seekCover: true,
+    mineStrategy: 'chokepoint',     mineChance: 0.007,
+    missileStrategy: 'opportunistic', missileChance: 0.013,
+  },
 };
 
 function createBot(id, ownerId, difficulty, nameIdx) {
@@ -319,83 +344,118 @@ function rayVsAABB(ox, oy, dx, dy, length, o) {
   return true;
 }
 
-// Three forward-facing feelers: centre, left-45°, right-45°.
-// Also checks world boundary proximity.
-function botFeelers(bot) {
-  const LOOK_FWD  = 95;
-  const LOOK_SIDE = 70;
-  const SIDE_ANG  = Math.PI / 4;
-  const WALL_PAD  = TANK_RADIUS + 12;
+function normAngle(a) { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; }
 
+// Three forward-facing feelers using per-difficulty look distances.
+function botFeelers(bot, cfg) {
+  const SIDE_ANG = Math.PI / 4;
+  const WALL_PAD = TANK_RADIUS + 12;
   const fwd = bot.angle;
   const cdx = Math.cos(fwd), cdy = Math.sin(fwd);
   const ldx = Math.cos(fwd - SIDE_ANG), ldy = Math.sin(fwd - SIDE_ANG);
   const rdx = Math.cos(fwd + SIDE_ANG), rdy = Math.sin(fwd + SIDE_ANG);
-
   let fwdBlocked = false, leftBlocked = false, rightBlocked = false;
-
   for (const o of obstacles) {
-    if (!fwdBlocked   && rayVsAABB(bot.x, bot.y, cdx, cdy, LOOK_FWD,  o)) fwdBlocked   = true;
-    if (!leftBlocked  && rayVsAABB(bot.x, bot.y, ldx, ldy, LOOK_SIDE, o)) leftBlocked  = true;
-    if (!rightBlocked && rayVsAABB(bot.x, bot.y, rdx, rdy, LOOK_SIDE, o)) rightBlocked = true;
+    if (!fwdBlocked   && rayVsAABB(bot.x, bot.y, cdx, cdy, cfg.lookFwd,  o)) fwdBlocked   = true;
+    if (!leftBlocked  && rayVsAABB(bot.x, bot.y, ldx, ldy, cfg.lookSide, o)) leftBlocked  = true;
+    if (!rightBlocked && rayVsAABB(bot.x, bot.y, rdx, rdy, cfg.lookSide, o)) rightBlocked = true;
   }
-
-  // World walls
-  const fx = bot.x + cdx * LOOK_FWD, fy = bot.y + cdy * LOOK_FWD;
+  const fx = bot.x + cdx * cfg.lookFwd, fy = bot.y + cdy * cfg.lookFwd;
   if (fx < WALL_PAD || fx > WORLD_W - WALL_PAD || fy < WALL_PAD || fy > WORLD_H - WALL_PAD)
     fwdBlocked = true;
-
   return { fwdBlocked, leftBlocked, rightBlocked };
 }
 
-function normAngle(a) { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; }
+// Returns direction angle toward the nearest obstacle (for cover seeking).
+function nearestObstacleAngle(bot) {
+  let best = Infinity, angle = 0;
+  for (const o of obstacles) {
+    const dx = o.x - bot.x, dy = o.y - bot.y;
+    const d = dx * dx + dy * dy;
+    if (d < best) { best = d; angle = Math.atan2(dy, dx); }
+  }
+  return angle;
+}
+
+// True if the point (x,y) is within 'margin' px of any obstacle edge.
+function nearObstacle(x, y, margin) {
+  for (const o of obstacles) {
+    const cx = Math.max(o.x - o.w / 2, Math.min(x, o.x + o.w / 2));
+    const cy = Math.max(o.y - o.h / 2, Math.min(y, o.y + o.h / 2));
+    if ((x - cx) ** 2 + (y - cy) ** 2 < margin * margin) return true;
+  }
+  return false;
+}
+
+// True if the target is far from all obstacles (exposed / in the open).
+function targetInOpen(target) {
+  return !nearObstacle(target.x, target.y, 70);
+}
+
+// True if an enemy tank appears to be chasing this bot
+// (enemy is roughly facing toward the bot).
+function enemyChasing(bot, target) {
+  const angleToBot = Math.atan2(bot.y - target.y, bot.x - target.x);
+  return Math.abs(normAngle(angleToBot - target.angle)) < 0.6;
+}
+
+// Steer toward a desired angle; apply obstacle avoidance if forward is blocked.
+function steerToward(bot, desiredAngle, inp, feelers) {
+  const { fwdBlocked, leftBlocked, rightBlocked } = feelers;
+  const diff = normAngle(desiredAngle - bot.angle);
+  if (fwdBlocked) {
+    inp.forward = false;
+    if (!rightBlocked)     inp.rotateRight = true;
+    else if (!leftBlocked) inp.rotateLeft  = true;
+    else                   inp.backward    = true;
+  } else {
+    inp.rotateRight = diff >  0.08;
+    inp.rotateLeft  = diff < -0.08;
+    inp.forward     = true;
+  }
+}
 
 function tickBotAI(bot) {
   if (!bot.alive) return;
   const cfg = BOT_CFG[bot.difficulty] || BOT_CFG.medium;
   const inp = bot.input;
 
-  // Reset inputs
+  // Reset all inputs
   inp.fire = inp.mine = inp.missile = false;
   inp.forward = inp.backward = inp.rotateLeft = inp.rotateRight = false;
 
-  // Stuck detection: position barely moved despite trying to move last tick
+  // ── Stuck detection ──────────────────────────────────────────────────────
   const moved = (bot.x - bot.botPrevX) ** 2 + (bot.y - bot.botPrevY) ** 2;
   if (bot.botWasTryingToMove && moved < 0.5) {
-    bot.botStuckTimer++;
-    if (bot.botStuckTimer > 12) {
-      // Escape: turn 90° and drive briefly
-      bot.botWander = bot.angle + (Math.random() > 0.5 ? Math.PI / 2 : -Math.PI / 2)
-                      + (Math.random() - 0.5) * 0.6;
+    if (++bot.botStuckTimer > cfg.stuckThresh) {
+      bot.botWander     = bot.angle + (Math.random() > 0.5 ? Math.PI / 2 : -Math.PI / 2)
+                          + (Math.random() - 0.5) * 0.6;
       bot.botWanderTimer = 35 + Math.floor(Math.random() * 25);
       bot.botStuckTimer  = 0;
     }
-  } else {
-    bot.botStuckTimer = 0;
-  }
+  } else { bot.botStuckTimer = 0; }
   bot.botPrevX = bot.x; bot.botPrevY = bot.y;
 
-  // Obstacle feelers
-  const { fwdBlocked, leftBlocked, rightBlocked } = botFeelers(bot);
+  const feelers = botFeelers(bot, cfg);
+  const { fwdBlocked, leftBlocked, rightBlocked } = feelers;
 
-  // ── Wander override (avoidance / unstuck) ─────────────────────────────────
+  // ── Wander / escape override ─────────────────────────────────────────────
   if (bot.botWanderTimer > 0) {
     bot.botWanderTimer--;
     const wd = normAngle(bot.botWander - bot.angle);
     if (Math.abs(wd) > 0.12) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
-    else                      { inp.forward = !fwdBlocked; }
-    // Re-test feelers even during wander to avoid entering a new hedgerow
+    else { inp.forward = !fwdBlocked; }
     if (fwdBlocked) {
       inp.forward = false;
       if (!rightBlocked) inp.rotateRight = true;
       else if (!leftBlocked) inp.rotateLeft = true;
-      else { inp.backward = true; }
+      else inp.backward = true;
     }
     bot.botWasTryingToMove = inp.forward || inp.backward;
     return;
   }
 
-  // ── Find closest alive enemy ───────────────────────────────────────────────
+  // ── Find closest alive enemy ─────────────────────────────────────────────
   let target = null, bestDist = Infinity;
   for (const [, p] of players) {
     if (p.id === bot.id || !p.alive) continue;
@@ -405,39 +465,62 @@ function tickBotAI(bot) {
   }
 
   if (target) {
-    const dist = Math.sqrt(bestDist);
+    const dist    = Math.sqrt(bestDist);
+    const toTarget = Math.atan2(target.y - bot.y, target.x - bot.x);
+    const diff     = normAngle(toTarget - bot.angle);
 
-    // Aim (with difficulty-based noise)
-    const aimAngle = Math.atan2(target.y - bot.y, target.x - bot.x)
-                     + (Math.random() - 0.5) * cfg.aimError;
-    const diff = normAngle(aimAngle - bot.angle);
-
-    const wantForward = dist > TANK_RADIUS * 3.5;
-
-    if (wantForward && fwdBlocked) {
-      // Obstacle in the way — steer around it
-      if (!rightBlocked)      { inp.rotateRight = true; }
-      else if (!leftBlocked)  { inp.rotateLeft  = true; }
-      else {
-        // Cornered — back up and pick a new escape direction
-        inp.backward = true;
-        bot.botWander     = bot.angle + Math.PI + (Math.random() - 0.5) * 1.2;
-        bot.botWanderTimer = 20 + Math.floor(Math.random() * 20);
+    // ── Cover / retreat (medium + hard when HP is low) ───────────────────
+    const retreating = cfg.seekCover && bot.hp <= cfg.retreatHp;
+    if (retreating) {
+      // Move toward nearest obstacle for cover; still face and fire at enemy
+      const coverAngle = nearestObstacleAngle(bot);
+      // If already behind cover, hold position and fire
+      if (nearObstacle(bot.x, bot.y, TANK_RADIUS + 28)) {
+        // Hold — just rotate to face enemy and shoot
+        inp.rotateRight = diff >  0.08;
+        inp.rotateLeft  = diff < -0.08;
+      } else {
+        steerToward(bot, coverAngle, inp, feelers);
       }
+      // Lay a mine while retreating to discourage pursuit
+      if (bot.minesLeft > 0 && Math.random() < cfg.mineChance * 2) inp.mine = true;
+
     } else {
-      // Normal chase steering
-      inp.rotateRight = diff > 0.08;
-      inp.rotateLeft  = diff < -0.08;
-      inp.forward     = wantForward;
+      // ── Normal chase / engage ─────────────────────────────────────────
+      if (dist > TANK_RADIUS * 3.5 && fwdBlocked) {
+        // Obstacle in the way — steer around it
+        if (!rightBlocked)     { inp.rotateRight = true; }
+        else if (!leftBlocked) { inp.rotateLeft  = true; }
+        else {
+          inp.backward = true;
+          bot.botWander     = bot.angle + Math.PI + (Math.random() - 0.5) * 1.2;
+          bot.botWanderTimer = 20 + Math.floor(Math.random() * 20);
+        }
+      } else {
+        inp.rotateRight = diff >  0.08;
+        inp.rotateLeft  = diff < -0.08;
+        inp.forward     = dist > TANK_RADIUS * 3.5;
+      }
     }
 
-    // Weapons
-    if (Math.abs(diff) < 0.28 && dist < cfg.fireRange) inp.fire = true;
-    if (cfg.mineChance    > 0 && bot.minesLeft > 0  && Math.random() < cfg.mineChance)    inp.mine    = true;
-    if (cfg.missileChance > 0 && bot.missileReady   && Math.random() < cfg.missileChance) inp.missile = true;
+    // ── Fire ─────────────────────────────────────────────────────────────
+    if (Math.abs(diff) < cfg.fireAngleTol) inp.fire = true;
+
+    // ── Mines ─────────────────────────────────────────────────────────────
+    if (bot.minesLeft > 0 && Math.random() < cfg.mineChance) {
+      if      (cfg.mineStrategy === 'random')     { inp.mine = true; }
+      else if (cfg.mineStrategy === 'pursuit')    { if (enemyChasing(bot, target)) inp.mine = true; }
+      else if (cfg.mineStrategy === 'chokepoint') { if (nearObstacle(bot.x, bot.y, TANK_RADIUS + 35)) inp.mine = true; }
+    }
+
+    // ── Missile ───────────────────────────────────────────────────────────
+    if (bot.missileReady && Math.random() < cfg.missileChance) {
+      if      (cfg.missileStrategy === 'random')        { inp.missile = true; }
+      else if (cfg.missileStrategy === 'opportunistic') { if (targetInOpen(target)) inp.missile = true; }
+    }
 
   } else {
-    // No targets — wander randomly
+    // ── No targets — wander ───────────────────────────────────────────────
     if (--bot.botWanderTimer <= 0) {
       bot.botWander     = Math.random() * Math.PI * 2;
       bot.botWanderTimer = 90 + Math.floor(Math.random() * 60);
@@ -445,13 +528,11 @@ function tickBotAI(bot) {
     const wd = normAngle(bot.botWander - bot.angle);
     if (Math.abs(wd) > 0.15) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
     inp.forward = true;
-
-    // Avoid obstacles even while wandering
     if (fwdBlocked) {
       inp.forward = false;
       if (!rightBlocked)     inp.rotateRight = true;
       else if (!leftBlocked) inp.rotateLeft  = true;
-      else                   { inp.backward = true; bot.botWanderTimer = 12; }
+      else { inp.backward = true; bot.botWanderTimer = 12; }
     }
   }
 
