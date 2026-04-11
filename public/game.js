@@ -36,10 +36,26 @@ const isTouch = () => ('ontouchstart' in window) || navigator.maxTouchPoints > 0
 
 function fitCanvas() {
   const W = worldW || 1200, H = worldH || 800;
-  const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+  const vw = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
+  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const scale = Math.min(vw / W, vh / H);
   canvas.style.width  = Math.floor(W * scale) + 'px';
   canvas.style.height = Math.floor(H * scale) + 'px';
 }
+
+function requestFullscreenIfMobile() {
+  if (!isTouch()) return;
+  const el = document.documentElement;
+  if (el.requestFullscreen) {
+    el.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+  } else if (el.webkitRequestFullscreen) {
+    el.webkitRequestFullscreen();
+  }
+}
+
+document.addEventListener('fullscreenchange',       fitCanvas);
+document.addEventListener('webkitfullscreenchange', fitCanvas);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { fitCanvas(); checkPortrait(); });
 
 function checkPortrait() {
   const warn = document.getElementById('portrait-warn');
@@ -216,7 +232,7 @@ function joinGame() {
   const name = document.getElementById('name-input').value.trim() || 'Tank';
   document.getElementById('name-screen').style.display = 'none';
   document.getElementById('game-wrap').style.display = 'flex';
-  if (isTouch()) setupTouchControls();
+  if (isTouch()) { setupTouchControls(); requestFullscreenIfMobile(); }
   fitCanvas();
   checkPortrait();
 
