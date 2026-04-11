@@ -305,6 +305,50 @@ const BOT_CFG = {
   },
 };
 
+// ─── Player Behaviour Models (hard bot adaptive learning) ─────────────────────
+const playerModels = new Map(); // playerId -> BehaviourModel
+
+function getOrCreateModel(id) {
+  if (!playerModels.has(id)) {
+    playerModels.set(id, {
+      dodgeBias:  0,     // EMA of turn direction under bot aim (+ = tends right, - = left)
+      avgRange:   350,   // EMA of player's preferred engagement distance
+      coverUsage: 0,     // EMA fraction of ticks spent near obstacles
+      isRusher:   0.5,   // EMA 0 = stays far/sniper, 1 = closes in/rusher
+      prevX: null, prevY: null, prevAngle: null,
+    });
+  }
+  return playerModels.get(id);
+}
+
+// Sample one tick of a human player's behaviour relative to 'bot' and update EMA model.
+function samplePlayerBehavior(player, bot) {
+  const m = getOrCreateModel(player.id);
+  const A = 0.04; // EMA alpha ≈ 0.8 s half-life at 30 Hz
+  if (m.prevX !== null) {
+    // Movement aggression
+    const speed = Math.hypot(player.x - m.prevX, player.y - m.prevY);
+    m.isRusher += ((speed > 1.5 ? 1 : 0) - m.isRusher) * A;
+
+    // Dodge direction bias: sample only when bot is roughly aimed at player
+    const angleToPlayer = Math.atan2(player.y - bot.y, player.x - bot.x);
+    if (Math.abs(normAngle(angleToPlayer - bot.angle)) < 0.25) {
+      const turn = normAngle(player.angle - m.prevAngle);
+      m.dodgeBias += (Math.sign(turn) - m.dodgeBias) * A;
+    }
+
+    // Preferred range
+    const dist = Math.hypot(player.x - bot.x, player.y - bot.y);
+    m.avgRange += (dist - m.avgRange) * A * 0.5;
+
+    // Cover usage
+    const inCover = nearObstacle(player.x, player.y, TANK_RADIUS + 50) ? 1 : 0;
+    m.coverUsage += (inCover - m.coverUsage) * A;
+  }
+  m.prevX = player.x; m.prevY = player.y; m.prevAngle = player.angle;
+  return m;
+}
+
 function createBot(id, ownerId, difficulty, nameIdx) {
   const spawn = randomSpawn();
   return {
@@ -499,8 +543,18 @@ function tickBotAI(bot) {
     const dist     = Math.sqrt(bestDist);
     const toTarget = Math.atan2(target.y - bot.y, target.x - bot.x);
 
+    // ── Adaptive learning: sample human player behaviour (hard only) ─────
+    let model = null;
+    if (cfg.predictShots && !target.isBot) {
+      model = samplePlayerBehavior(target, bot);
+    }
+
     // Aim angle: hard bots lead the shot; others aim directly
-    const aimAngle = cfg.predictShots ? predictedAimAngle(bot, target) : toTarget;
+    let aimAngle = cfg.predictShots ? predictedAimAngle(bot, target) : toTarget;
+    // Counter observed dodge bias: shift aim opposite to the player's habitual dodge
+    if (model && Math.abs(model.dodgeBias) > 0.1) {
+      aimAngle -= model.dodgeBias * 0.2; // up to ~0.2 rad counter-lean
+    }
     const diff     = normAngle(aimAngle - bot.angle);
 
     // ── Bullet-in-motion awareness (hard) ────────────────────────────────
@@ -538,7 +592,11 @@ function tickBotAI(bot) {
 
       } else if (cfg.optimalRange) {
         // ── Hard: maintain optimal engagement range ───────────────────
-        const lo = cfg.optimalRange * 0.65, hi = cfg.optimalRange * 1.5;
+        // Adapt range: stay further from rushers, close in on snipers
+        const adaptedRange = model
+          ? cfg.optimalRange * (0.75 + model.isRusher * 0.55)  // 0.75–1.3×
+          : cfg.optimalRange;
+        const lo = adaptedRange * 0.65, hi = adaptedRange * 1.5;
         if (dist < lo) {
           // Too close — back away while keeping aim
           inp.rotateRight = diff >  0.08;
@@ -593,7 +651,11 @@ function tickBotAI(bot) {
     // ── Missile ───────────────────────────────────────────────────────────
     if (bot.missileReady && Math.random() < cfg.missileChance) {
       if      (cfg.missileStrategy === 'random')        { inp.missile = true; }
-      else if (cfg.missileStrategy === 'opportunistic') { if (targetInOpen(target)) inp.missile = true; }
+      else if (cfg.missileStrategy === 'opportunistic') {
+        if (targetInOpen(target)) { inp.missile = true; }
+        // Flush campers: if player frequently hides, fire even when in cover
+        else if (model && model.coverUsage > 0.45 && Math.random() < 0.45) { inp.missile = true; }
+      }
     }
 
   } else {
@@ -932,6 +994,7 @@ wss.on('connection', ws => {
   });
 
   ws.on('close', () => {
+    playerModels.delete(id);
     // Remove any bots owned by this player
     for (const [pid, p] of players) {
       if (p.isBot && p.ownerId === id) players.delete(pid);
