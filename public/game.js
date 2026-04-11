@@ -86,7 +86,37 @@ window.addEventListener('resize',            () => { fitCanvas(); checkPortrait(
 window.addEventListener('orientationchange', () => { fitCanvas(); checkPortrait(); });
 
 let voiceMuted = false;
+let paused = false;
+
+window.togglePause = function() {
+  paused = !paused;
+  const overlay = document.getElementById('pause-overlay');
+  overlay.style.display = paused ? 'flex' : 'none';
+  // Release all keys so tank doesn't keep moving when paused
+  if (paused) Object.keys(keys).forEach(k => { keys[k] = false; });
+};
+
+window.exitToMenu = function() {
+  paused = false;
+  document.getElementById('pause-overlay').style.display = 'none';
+  if (ws) { ws.close(); ws = null; }
+  // Reset game state
+  myId = null;
+  gameState = { players: [], bullets: [], mines: [] };
+  obstacles = [];
+  Object.keys(keys).forEach(k => { keys[k] = false; });
+  lastInputStr = '';
+  // Return to join screen
+  document.getElementById('game-wrap').style.display  = 'none';
+  document.getElementById('name-screen').style.display = '';
+  document.getElementById('mobile-controls').style.display = 'none';
+};
+
 window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' || e.key.toLowerCase() === 'p') {
+    if (ws) { togglePause(); e.preventDefault(); return; }
+  }
+  if (paused) return;
   if (e.key.toLowerCase() === 'm') {
     voiceMuted = !voiceMuted; Voice.setMuted(voiceMuted); e.preventDefault(); return;
   }
@@ -98,13 +128,14 @@ window.addEventListener('keyup', e => {
   if (action) { keys[action] = false; e.preventDefault(); }
 });
 
-// Send input at ~30 Hz (only when changed)
+// Send input at ~30 Hz (only when changed); send all-false when paused
 setInterval(() => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const str = JSON.stringify(keys);
+  const send = paused ? { forward:false,backward:false,rotateLeft:false,rotateRight:false,fire:false,mine:false,missile:false } : keys;
+  const str = JSON.stringify(send);
   if (str !== lastInputStr) {
     lastInputStr = str;
-    ws.send(JSON.stringify({ type: 'input', ...keys }));
+    ws.send(JSON.stringify({ type: 'input', ...send }));
   }
 }, 33);
 
@@ -497,6 +528,7 @@ function renderLoop(now) {
 }
 
 function render(dt = 0) {
+  if (paused) return;   // freeze canvas while paused (overlay handles UI)
   checkStateChanges();
   const { players, bullets, mines, missiles: msls = [], round } = gameState;
 

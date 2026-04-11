@@ -177,6 +177,42 @@
     #respawn-box h2 { color: #e74c3c; font-size: 28px; letter-spacing: 4px; }
     #respawn-count  { font-size: 40px; margin-top: 8px; color: #f39c12; }
 
+    /* ── Pause overlay ──────────────────────────────────────────── */
+    #pause-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 200;
+      pointer-events: all;
+    }
+    #pause-overlay h2 {
+      font-size: clamp(28px, 6vw, 48px);
+      letter-spacing: 8px;
+      color: #f39c12;
+      text-shadow: 0 0 20px #f39c12aa;
+      margin: 0;
+    }
+    .pause-btn {
+      font-family: 'Courier New', monospace;
+      font-size: clamp(14px, 3vw, 18px);
+      font-weight: bold;
+      padding: 12px 36px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      letter-spacing: 2px;
+      min-width: 200px;
+    }
+    #pause-resume { background: #27ae60; color: #fff; }
+    #pause-resume:active { background: #1e8449; }
+    #pause-exit   { background: #c0392b; color: #fff; margin-top: 4px; }
+    #pause-exit:active   { background: #922b21; }
+
     /* ── Mobile controls overlay ────────────────────────────────── */
     #mobile-controls {
       display: none;   /* shown via JS on touch devices */
@@ -363,9 +399,13 @@
   <!-- Desktop HUD bar -->
   <div id="top-bar">
     <div id="my-status">Connecting...</div>
-    <div id="controls-hint">W/S Move &bull; A/X Rotate &bull; SPACE Fire &bull; C Mine &bull; Q Missile &bull; M Mute</div>
-    <button id="mute-btn" onclick="voiceMuted=!voiceMuted;Voice.setMuted(voiceMuted)"
-            style="font-family:'Courier New',monospace;font-size:12px;background:#196319;color:#eee;border:1px solid #555;padding:3px 12px;cursor:pointer;border-radius:4px;">🎤 Live</button>
+    <div id="controls-hint">W/S Move &bull; A/X Rotate &bull; SPACE Fire &bull; C Mine &bull; Q Missile &bull; M Mute &bull; P Pause</div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button onclick="togglePause()"
+              style="font-family:'Courier New',monospace;font-size:12px;background:#555;color:#eee;border:1px solid #777;padding:3px 12px;cursor:pointer;border-radius:4px;">⏸ Pause</button>
+      <button id="mute-btn" onclick="voiceMuted=!voiceMuted;Voice.setMuted(voiceMuted)"
+              style="font-family:'Courier New',monospace;font-size:12px;background:#196319;color:#eee;border:1px solid #555;padding:3px 12px;cursor:pointer;border-radius:4px;">🎤 Live</button>
+    </div>
   </div>
 
   <!-- Canvas -->
@@ -376,6 +416,12 @@
         <h2>DESTROYED</h2>
         <div id="respawn-count">3</div>
       </div>
+    </div>
+    <!-- Pause overlay (sits inside canvas-wrap so it scales with canvas) -->
+    <div id="pause-overlay">
+      <h2>⏸ PAUSED</h2>
+      <button class="pause-btn" id="pause-resume" onclick="togglePause()">▶ RESUME</button>
+      <button class="pause-btn" id="pause-exit"   onclick="exitToMenu()">✕ EXIT TO MENU</button>
     </div>
   </div>
 
@@ -406,6 +452,18 @@
 
     <!-- Mute (top-right) -->
     <button id="mobile-mute" onclick="voiceMuted=!voiceMuted;Voice.setMuted(voiceMuted)">🎤 Live</button>
+    <!-- Pause (top-left) -->
+    <button id="mobile-pause" onclick="togglePause()" style="
+      position:absolute;
+      top: max(10px, env(safe-area-inset-top, 10px));
+      left: max(10px, env(safe-area-inset-left, 10px));
+      pointer-events:all;
+      font-family:'Courier New',monospace;
+      font-size:11px;
+      background:#444;color:#eee;
+      border:1px solid #666;
+      padding:6px 10px;border-radius:6px;
+      cursor:pointer;touch-action:manipulation;">⏸ PAUSE</button>
 
   </div><!-- /mobile-controls -->
 
