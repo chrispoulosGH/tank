@@ -241,6 +241,74 @@ function playExplosionSound() {
   } catch (_) {}
 }
 
+function playMissileLaunchSound() {
+  try {
+    const ac  = getAudio();
+    const now = ac.currentTime;
+
+    // Rising whistle sweep — rocket leaving the barrel
+    const osc = ac.createOscillator();
+    const og  = ac.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(1400, now + 0.35);
+    og.gain.setValueAtTime(0.25, now);
+    og.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc.connect(og); og.connect(ac.destination);
+    osc.start(now); osc.stop(now + 0.35);
+
+    // Rocket hiss — bandpass noise that grows
+    const len = Math.floor(ac.sampleRate * 0.5);
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const d   = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (0.2 + 0.8 * (i / len));
+    const src  = ac.createBufferSource();
+    src.buffer = buf;
+    const filt = ac.createBiquadFilter();
+    filt.type = 'bandpass'; filt.frequency.value = 2200; filt.Q.value = 1.8;
+    const ng = ac.createGain();
+    ng.gain.setValueAtTime(0.7, now);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    src.connect(filt); filt.connect(ng); ng.connect(ac.destination);
+    src.start(now);
+  } catch (_) {}
+}
+
+function playBulletHitSound() {
+  try {
+    const ac  = getAudio();
+    const now = ac.currentTime;
+
+    // Metallic clang — short triangle ping that drops fast
+    for (const [freq, vol, dur] of [[1100, 0.55, 0.09], [620, 0.35, 0.13]]) {
+      const osc = ac.createOscillator();
+      const og  = ac.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.4, now + dur);
+      og.gain.setValueAtTime(vol, now);
+      og.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      osc.connect(og); og.connect(ac.destination);
+      osc.start(now); osc.stop(now + dur);
+    }
+
+    // High-frequency noise burst — impact texture
+    const len = Math.floor(ac.sampleRate * 0.07);
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const d   = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+    const src  = ac.createBufferSource();
+    src.buffer = buf;
+    const filt = ac.createBiquadFilter();
+    filt.type = 'highpass'; filt.frequency.value = 3000;
+    const ng = ac.createGain();
+    ng.gain.setValueAtTime(0.9, now);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+    src.connect(filt); filt.connect(ng); ng.connect(ac.destination);
+    src.start(now);
+  } catch (_) {}
+}
+
 // ─── Explosions ───────────────────────────────────────────────────────────────
 
 let explosions = [];
@@ -328,6 +396,8 @@ function updateAndDrawExplosions(dt) {
 
 const prevAlive        = {};
 const seenBulletIds    = new Set();
+const seenMissileIds   = new Set();
+const prevPlayerHp     = {};
 const clientColliding  = new Set(); // pairKey strings currently overlapping
 
 function clientPairKey(a, b) { return a < b ? `${a}|${b}` : `${b}|${a}`; }
@@ -357,13 +427,16 @@ let   blastEffects     = [];          // [{x,y,life}] for blast-radius rings
 function checkStateChanges() {
   const { players, bullets } = gameState;
 
-  // Deaths → explosion
+  // Deaths → explosion; HP drop → metallic hit
   for (const p of players) {
     if (p.id in prevAlive && prevAlive[p.id] === true && !p.alive) {
       spawnExplosion(p.x, p.y);
       playExplosionSound();
+    } else if (p.id in prevPlayerHp && p.alive && p.hp < prevPlayerHp[p.id]) {
+      playBulletHitSound();
     }
-    prevAlive[p.id] = p.alive;
+    prevAlive[p.id]   = p.alive;
+    prevPlayerHp[p.id] = p.hp;
   }
 
   // New bullets by this player → fire sound
@@ -404,7 +477,12 @@ function checkStateChanges() {
     }
   }
   prevMissilePos.clear();
-  for (const m of (gameState.missiles || [])) prevMissilePos.set(m.id, { x: m.x, y: m.y });
+  for (const m of (gameState.missiles || [])) {
+    if (!seenMissileIds.has(m.id)) playMissileLaunchSound();
+    seenMissileIds.add(m.id);
+    prevMissilePos.set(m.id, { x: m.x, y: m.y });
+  }
+  if (seenMissileIds.size > 500) seenMissileIds.clear();
 }
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
