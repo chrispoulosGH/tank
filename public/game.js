@@ -48,8 +48,71 @@ function checkPortrait() {
   warn.style.display = (isTouch() && portrait) ? 'flex' : 'none';
 }
 
+function setupJoystick() {
+  const base = document.getElementById('joystick-base');
+  const knob = document.getElementById('joystick-knob');
+  if (!base || !knob) return;
+
+  const MAX_R  = 40;   // max knob travel radius in px
+  const DEAD   = 0.22; // deadzone fraction (22 % of MAX_R)
+
+  let tid = null; // active touch identifier
+
+  function applyOffset(dx, dy) {
+    const dist = Math.hypot(dx, dy);
+    const scale = dist > MAX_R ? MAX_R / dist : 1;
+    const kx = dx * scale, ky = dy * scale;
+    knob.style.transform = `translate(${kx}px,${ky}px)`;
+    const nx = kx / MAX_R, ny = ky / MAX_R;
+    keys.forward     = ny < -DEAD;
+    keys.backward    = ny >  DEAD;
+    keys.rotateLeft  = nx < -DEAD;
+    keys.rotateRight = nx >  DEAD;
+  }
+
+  function resetJoystick() {
+    knob.style.transform = 'translate(0,0)';
+    keys.forward = keys.backward = keys.rotateLeft = keys.rotateRight = false;
+    tid = null;
+  }
+
+  function baseCenter() {
+    const r = base.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
+  base.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (tid !== null) return;
+    const t = e.changedTouches[0];
+    tid = t.identifier;
+    const c = baseCenter();
+    applyOffset(t.clientX - c.x, t.clientY - c.y);
+  }, { passive: false });
+
+  base.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier !== tid) continue;
+      const c = baseCenter();
+      applyOffset(t.clientX - c.x, t.clientY - c.y);
+      break;
+    }
+  }, { passive: false });
+
+  base.addEventListener('touchend', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === tid) { resetJoystick(); break; }
+    }
+  }, { passive: false });
+
+  base.addEventListener('touchcancel', () => resetJoystick(), { passive: false });
+}
+
 function setupTouchControls() {
   document.getElementById('mobile-controls').style.display = 'block';
+  setupJoystick();
 
   // Wire every [data-action] button
   document.querySelectorAll('[data-action]').forEach(btn => {

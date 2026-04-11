@@ -222,16 +222,48 @@
       z-index: 300;
     }
 
-    /* D-pad — bottom-left */
-    #dpad {
+    /* Joystick — bottom-left */
+    #joystick-zone {
       position: absolute;
-      left:   max(14px, env(safe-area-inset-left, 14px));
-      bottom: max(14px, env(safe-area-inset-bottom, 14px));
-      display: grid;
-      grid-template-columns: repeat(3, 62px);
-      grid-template-rows:    repeat(3, 62px);
-      gap: 5px;
+      left:   max(10px, env(safe-area-inset-left, 10px));
+      bottom: max(10px, env(safe-area-inset-bottom, 10px));
+      width: 150px;
+      height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: all;
+      touch-action: none;
+    }
+    #joystick-base {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      background: rgba(8, 8, 8, 0.52);
+      border: 2px solid rgba(255,255,255,0.18);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.04) inset;
+    }
+    #joystick-base::before {        /* centre pip */
+      content: '';
+      position: absolute;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.12);
+    }
+    #joystick-knob {
+      position: absolute;
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      background: rgba(243,156,18,0.38);
+      border: 2px solid rgba(243,156,18,0.85);
       pointer-events: none;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+      will-change: transform;
     }
 
     /* Action buttons — bottom-right */
@@ -293,21 +325,6 @@
       background: rgba(255,255,255,0.22);
       border-color: rgba(255,255,255,0.7);
       transform: scale(0.90);
-    }
-
-    /* D-pad arrow buttons */
-    #btn-up    { grid-column: 2; grid-row: 1; font-size: 26px; }
-    #btn-left  { grid-column: 1; grid-row: 2; font-size: 26px; }
-    #btn-right { grid-column: 3; grid-row: 2; font-size: 26px; }
-    #btn-down  { grid-column: 2; grid-row: 3; font-size: 26px; }
-
-    /* D-pad centre hub (not a button) */
-    .dpad-hub {
-      grid-column: 2; grid-row: 2;
-      width: 62px; height: 62px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.05);
-      border: 2px solid rgba(255,255,255,0.1);
     }
 
     /* Coloured action buttons */
@@ -431,13 +448,11 @@
   <!-- Mobile controls (shown only on touch devices) -->
   <div id="mobile-controls">
 
-    <!-- D-pad (left thumb) -->
-    <div id="dpad">
-      <button class="ctrl-btn" id="btn-up"    data-action="forward">▲</button>
-      <button class="ctrl-btn" id="btn-left"  data-action="rotateLeft">◀</button>
-      <div class="dpad-hub"></div>
-      <button class="ctrl-btn" id="btn-right" data-action="rotateRight">▶</button>
-      <button class="ctrl-btn" id="btn-down"  data-action="backward">▼</button>
+    <!-- Joystick (left thumb) -->
+    <div id="joystick-zone">
+      <div id="joystick-base">
+        <div id="joystick-knob"></div>
+      </div>
     </div>
 
     <!-- Action buttons (right thumb) -->
