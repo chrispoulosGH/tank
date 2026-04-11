@@ -917,11 +917,11 @@ function tick() {
   });
 
   // Update air strikes — jet flies left to right bombing tanks in its path
-  const AIR_STRIKE_SPEED = 18; // px/tick → ~2.2 s to cross the world
+  const AIR_STRIKE_SPEED = 11; // px/tick → ~60% of original speed
   airStrikes = airStrikes.filter(a => {
     a.x += AIR_STRIKE_SPEED;
     for (const [, p] of players) {
-      if (a.hitIds.has(p.id) || !p.alive) continue;
+      if (a.hitIds.has(p.id) || !p.alive || p.id === a.ownerId) continue; // skip owner
       // Bomb drops when jet passes overhead; hit anything within blast radius vertically
       if (Math.abs(p.x - a.x) < 30 && Math.abs(p.y - a.y) < MISSILE_BLAST_RADIUS) {
         a.hitIds.add(p.id);

@@ -27,7 +27,7 @@ const KEY_MAP = {
   'arrowright': 'rotateRight',
   'c': 'mine',
   'q': 'missile',
-  'e': 'airStrike'
+  'v': 'airStrike'
 };
 
 // ─── Mobile / viewport ───────────────────────────────────────────────────────
