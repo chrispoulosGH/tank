@@ -178,11 +178,13 @@ function handleTankCollisions() {
 let players      = new Map();
 let bullets      = [];
 let mines        = [];
-let missiles     = [];
-let nextPlayerId = 1;
-let nextBulletId = 1;
-let nextMineId   = 1;
+let missiles      = [];
+let airStrikes    = [];
+let nextPlayerId  = 1;
+let nextBulletId  = 1;
+let nextMineId    = 1;
 let nextMissileId = 1;
+let nextAirStrikeId = 1;
 
 // ─── Round state ──────────────────────────────────────────────────────────────
 let roundNumber   = 1;
@@ -197,7 +199,7 @@ function respawnAll() {
   for (const [, p] of players) {
     const s = randomSpawn();
     p.x = s.x; p.y = s.y; p.angle = s.angle;
-    p.hp = 100; p.alive = true; p.minesLeft = MAX_MINES; p.missileReady = true;
+    p.hp = 100; p.alive = true; p.minesLeft = MAX_MINES; p.missileReady = true; p.airStrikeReady = true;
     p.fireCooldown = 0; p.mineCooldown = 0;
   }
   bullets = []; mines = []; missiles = [];
@@ -706,7 +708,8 @@ function createPlayer(id, ws) {
     minesLeft: MAX_MINES,
     mineCooldown: 0,
     missileReady: true,
-    input: { forward: false, backward: false, rotateLeft: false, rotateRight: false, fire: false, mine: false, missile: false }
+    airStrikeReady: true,
+    input: { forward: false, backward: false, rotateLeft: false, rotateRight: false, fire: false, mine: false, missile: false, airStrike: false }
   };
 }
 
@@ -799,6 +802,16 @@ function tick() {
         });
         p.missileReady = false;
       }
+    }
+
+    // Air strike
+    if (inp.airStrike && p.airStrikeReady && p.alive) {
+      airStrikes.push({
+        id: nextAirStrikeId++, ownerId: p.id,
+        x: -80, y: p.y,
+        hitIds: new Set(),
+      });
+      p.airStrikeReady = false;
     }
   }
 
@@ -903,6 +916,25 @@ function tick() {
     return true;
   });
 
+  // Update air strikes — jet flies left to right bombing tanks in its path
+  const AIR_STRIKE_SPEED = 18; // px/tick → ~2.2 s to cross the world
+  airStrikes = airStrikes.filter(a => {
+    a.x += AIR_STRIKE_SPEED;
+    for (const [, p] of players) {
+      if (a.hitIds.has(p.id) || !p.alive) continue;
+      // Bomb drops when jet passes overhead; hit anything within blast radius vertically
+      if (Math.abs(p.x - a.x) < 30 && Math.abs(p.y - a.y) < MISSILE_BLAST_RADIUS) {
+        a.hitIds.add(p.id);
+        p.hp = 0;
+        p.alive = false;
+        p.respawnTimer = RESPAWN_DELAY_TICKS;
+        const owner = players.get(a.ownerId);
+        if (owner && p.id !== a.ownerId) owner.score++;
+      }
+    }
+    return a.x < WORLD_W + 100;
+  });
+
   broadcastState();
 }
 
@@ -915,12 +947,14 @@ function broadcastState() {
       hp: p.hp, score: p.score, alive: p.alive,
       respawnTimer: p.respawnTimer, minesLeft: p.minesLeft,
       missileReady: p.missileReady,
+      airStrikeReady: p.airStrikeReady,
       roundWins: roundWins.get(p.id) || 0,
       isBot: !!p.isBot
     })),
-    bullets: bullets.map(b => ({ id: b.id, x: b.x, y: b.y, ownerId: b.ownerId })),
-    mines:    mines.map(m => ({ id: m.id, x: m.x, y: m.y, color: m.color, armed: m.armedTimer === 0 })),
-    missiles: missiles.map(m => ({ id: m.id, x: m.x, y: m.y, angle: m.angle })),
+    bullets:    bullets.map(b => ({ id: b.id, x: b.x, y: b.y, ownerId: b.ownerId })),
+    mines:      mines.map(m => ({ id: m.id, x: m.x, y: m.y, color: m.color, armed: m.armedTimer === 0 })),
+    missiles:   missiles.map(m => ({ id: m.id, x: m.x, y: m.y, angle: m.angle })),
+    airStrikes: airStrikes.map(a => ({ id: a.id, x: a.x, y: a.y })),
     round: {
       number:        roundNumber,
       ticksLeft:     roundTicksLeft,
@@ -966,6 +1000,7 @@ wss.on('connection', ws => {
         p.input.fire       = !!msg.fire;
         p.input.mine       = !!msg.mine;
         p.input.missile    = !!msg.missile;
+        p.input.airStrike  = !!msg.airStrike;
       } else if (msg.type === 'name' && typeof msg.name === 'string') {
         p.name = msg.name.trim().substring(0, 16) || `Player ${id}`;
         // Single-player: spawn AI bots owned by this player

@@ -11,7 +11,7 @@ let gameState = { players: [], bullets: [], mines: [] };
 let obstacles = [];
 
 // Input state
-const keys = { forward: false, backward: false, rotateLeft: false, rotateRight: false, fire: false, mine: false, missile: false };
+const keys = { forward: false, backward: false, rotateLeft: false, rotateRight: false, fire: false, mine: false, missile: false, airStrike: false };
 let lastInputStr = '';
 
 // Key bindings
@@ -26,7 +26,8 @@ const KEY_MAP = {
   'arrowleft': 'rotateLeft',
   'arrowright': 'rotateRight',
   'c': 'mine',
-  'q': 'missile'
+  'q': 'missile',
+  'e': 'airStrike'
 };
 
 // ─── Mobile / viewport ───────────────────────────────────────────────────────
@@ -131,7 +132,7 @@ window.addEventListener('keyup', e => {
 // Send input at ~30 Hz (only when changed); send all-false when paused
 setInterval(() => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const send = paused ? { forward:false,backward:false,rotateLeft:false,rotateRight:false,fire:false,mine:false,missile:false } : keys;
+  const send = paused ? { forward:false,backward:false,rotateLeft:false,rotateRight:false,fire:false,mine:false,missile:false,airStrike:false } : keys;
   const str = JSON.stringify(send);
   if (str !== lastInputStr) {
     lastInputStr = str;
@@ -340,6 +341,129 @@ function playBulletHitSound() {
   } catch (_) {}
 }
 
+function playAirStrikeSound() {
+  try {
+    const ac  = getAudio();
+    const now = ac.currentTime;
+
+    // Jet engine roar — bandpass filtered noise that Doppler-shifts across
+    const len = Math.floor(ac.sampleRate * 2.5);
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const d   = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src  = ac.createBufferSource();
+    src.buffer = buf;
+    const filt = ac.createBiquadFilter();
+    filt.type = 'bandpass'; filt.Q.value = 2.5;
+    filt.frequency.setValueAtTime(300,  now);
+    filt.frequency.exponentialRampToValueAtTime(3500, now + 1.2);
+    filt.frequency.exponentialRampToValueAtTime(220,  now + 2.5);
+    const ng = ac.createGain();
+    ng.gain.setValueAtTime(0, now);
+    ng.gain.linearRampToValueAtTime(2.5, now + 0.35);
+    ng.gain.setValueAtTime(2.5, now + 1.2);
+    ng.gain.linearRampToValueAtTime(0,   now + 2.5);
+    src.connect(filt); filt.connect(ng); ng.connect(ac.destination);
+    src.start(now);
+
+    // High turbine whine that sweeps like a Doppler pass
+    const osc = ac.createOscillator();
+    const og  = ac.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(800,  now);
+    osc.frequency.exponentialRampToValueAtTime(2800, now + 1.0);
+    osc.frequency.exponentialRampToValueAtTime(500,  now + 2.5);
+    og.gain.setValueAtTime(0,    now);
+    og.gain.linearRampToValueAtTime(0.18, now + 0.3);
+    og.gain.setValueAtTime(0.18, now + 1.2);
+    og.gain.linearRampToValueAtTime(0,   now + 2.5);
+    osc.connect(og); og.connect(ac.destination);
+    osc.start(now); osc.stop(now + 2.5);
+  } catch (_) {}
+}
+
+function drawJet(a) {
+  ctx.save();
+  ctx.translate(a.x, a.y);
+
+  // Twin contrails behind the jet
+  const cLen = Math.min(a.x + 80, 320);
+  if (cLen > 20) {
+    for (const yOff of [-5, 5]) {
+      const grad = ctx.createLinearGradient(-cLen, yOff, -24, yOff);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(1, 'rgba(255,255,255,0.55)');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(-cLen, yOff);
+      ctx.lineTo(-24, yOff);
+      ctx.stroke();
+    }
+  }
+
+  // Fuselage
+  ctx.fillStyle = '#9aa';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 30, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Nose cone
+  ctx.fillStyle = '#cdd';
+  ctx.beginPath();
+  ctx.moveTo(35, 0);
+  ctx.lineTo(18, -6);
+  ctx.lineTo(18,  6);
+  ctx.closePath();
+  ctx.fill();
+
+  // Main swept wings
+  ctx.fillStyle = '#778';
+  ctx.beginPath();
+  ctx.moveTo(10, -6);
+  ctx.lineTo(-14, -40);
+  ctx.lineTo(-22, -12);
+  ctx.lineTo(-14,  0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(10,  6);
+  ctx.lineTo(-14,  40);
+  ctx.lineTo(-22,  12);
+  ctx.lineTo(-14,   0);
+  ctx.closePath();
+  ctx.fill();
+
+  // Tail fins (smaller)
+  ctx.fillStyle = '#556';
+  ctx.beginPath();
+  ctx.moveTo(-20, 0); ctx.lineTo(-30, -16); ctx.lineTo(-24, 0); ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-20, 0); ctx.lineTo(-30,  16); ctx.lineTo(-24,  0); ctx.closePath(); ctx.fill();
+
+  // Engine afterburner glow
+  const flame = ctx.createRadialGradient(-30, 0, 0, -30, 0, 12);
+  flame.addColorStop(0, 'rgba(255,200,50,0.9)');
+  flame.addColorStop(0.5, 'rgba(255,80,0,0.6)');
+  flame.addColorStop(1, 'rgba(255,0,0,0)');
+  ctx.fillStyle = flame;
+  ctx.beginPath();
+  ctx.ellipse(-30, 0, 12, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bomb indicator line (dashed line to ground to show strike zone)
+  ctx.strokeStyle = 'rgba(255,80,0,0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(0, 8);
+  ctx.lineTo(0, worldH - a.y + 8);  // dashed drop line toward ground
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.restore();
+}
+
 // ─── Explosions ───────────────────────────────────────────────────────────────
 
 let explosions = [];
@@ -428,6 +552,7 @@ function updateAndDrawExplosions(dt) {
 const prevAlive        = {};
 const seenBulletIds    = new Set();
 const seenMissileIds   = new Set();
+const seenAirStrikeIds = new Set();
 const prevPlayerHp     = {};
 const clientColliding  = new Set(); // pairKey strings currently overlapping
 
@@ -514,6 +639,15 @@ function checkStateChanges() {
     prevMissilePos.set(m.id, { x: m.x, y: m.y });
   }
   if (seenMissileIds.size > 500) seenMissileIds.clear();
+
+  // New air strikes → jet flyby sound
+  for (const a of (gameState.airStrikes || [])) {
+    if (!seenAirStrikeIds.has(a.id)) {
+      playAirStrikeSound();
+      seenAirStrikeIds.add(a.id);
+    }
+  }
+  if (seenAirStrikeIds.size > 100) seenAirStrikeIds.clear();
 }
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
@@ -530,7 +664,7 @@ function renderLoop(now) {
 function render(dt = 0) {
   if (paused) return;   // freeze canvas while paused (overlay handles UI)
   checkStateChanges();
-  const { players, bullets, mines, missiles: msls = [], round } = gameState;
+  const { players, bullets, mines, missiles: msls = [], airStrikes: aStrikes = [], round } = gameState;
 
   // Background
   ctx.fillStyle = '#1a3a1a';
@@ -570,6 +704,9 @@ function render(dt = 0) {
     if (t.length > TRAIL_LEN) t.shift();
   }
   msls.forEach(drawMissile);
+
+  // Air strikes (jets fly above everything except HUD)
+  aStrikes.forEach(drawJet);
 
   // Tanks
   players.forEach(p => { if (p.alive) drawTank(p); });
@@ -1055,8 +1192,9 @@ function updateHUD(me) {
   if (!me) { el.textContent = 'Waiting for server...'; return; }
   if (!me.alive) return;
   const mineIcons    = '💣'.repeat(me.minesLeft ?? 0) || '—';
-  const missileIcon  = me.missileReady ? '🚀 <span style="color:#2ecc71">READY</span>' : '🚀 <span style="color:#555">USED</span>';
-  el.innerHTML = `HP: <span style="color:${me.hp > 60 ? '#2ecc71' : me.hp > 30 ? '#f39c12' : '#e74c3c'}">${me.hp}</span> &bull; Score: <strong>${me.score}</strong> &bull; Mines: ${mineIcons} &bull; ${missileIcon}`;
+  const missileIcon  = me.missileReady    ? '🚀 <span style="color:#2ecc71">READY</span>' : '🚀 <span style="color:#555">USED</span>';
+  const airIcon      = me.airStrikeReady  ? '✈ <span style="color:#3498db">READY</span>'  : '✈ <span style="color:#555">USED</span>';
+  el.innerHTML = `HP: <span style="color:${me.hp > 60 ? '#2ecc71' : me.hp > 30 ? '#f39c12' : '#e74c3c'}">${me.hp}</span> &bull; Score: <strong>${me.score}</strong> &bull; Mines: ${mineIcons} &bull; ${missileIcon} &bull; ${airIcon}`;
 }
 
 function updateRespawnOverlay(me) {

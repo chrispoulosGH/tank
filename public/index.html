@@ -311,12 +311,14 @@
     }
 
     /* Coloured action buttons */
-    #btn-fire    { border-color: #e74c3c55; }
-    #btn-mine    { border-color: #f39c1255; }
-    #btn-missile { border-color: #9b59b655; }
-    #btn-fire.pressed    { background: rgba(231,76,60,0.4);  border-color: #e74c3c; }
-    #btn-mine.pressed    { background: rgba(243,156,18,0.4); border-color: #f39c12; }
-    #btn-missile.pressed { background: rgba(155,89,182,0.4); border-color: #9b59b6; }
+    #btn-fire      { border-color: #e74c3c55; }
+    #btn-mine      { border-color: #f39c1255; }
+    #btn-missile   { border-color: #9b59b655; }
+    #btn-airstrike { border-color: #2980b955; }
+    #btn-fire.pressed      { background: rgba(231,76,60,0.4);  border-color: #e74c3c; }
+    #btn-mine.pressed      { background: rgba(243,156,18,0.4); border-color: #f39c12; }
+    #btn-missile.pressed   { background: rgba(155,89,182,0.4); border-color: #9b59b6; }
+    #btn-airstrike.pressed { background: rgba(41,128,185,0.4); border-color: #2980b9; }
 
     /* Landscape-only hint overlay when in portrait on mobile */
     #portrait-warn {
@@ -389,6 +391,7 @@
     <span>SPACE</span> Fire &nbsp;
     <span>C</span> Mine &nbsp;
     <span>Q</span> Missile &nbsp;
+    <span>E</span> Air Strike &nbsp;
     <span>M</span> Mute
   </div>
 </div>
@@ -399,7 +402,7 @@
   <!-- Desktop HUD bar -->
   <div id="top-bar">
     <div id="my-status">Connecting...</div>
-    <div id="controls-hint">W/S Move &bull; A/X Rotate &bull; SPACE Fire &bull; C Mine &bull; Q Missile &bull; M Mute &bull; P Pause</div>
+    <div id="controls-hint">W/S Move &bull; A/X Rotate &bull; SPACE Fire &bull; C Mine &bull; Q Missile &bull; E Air Strike &bull; M Mute &bull; P Pause</div>
     <div style="display:flex;gap:6px;align-items:center;">
       <button onclick="togglePause()"
               style="font-family:'Courier New',monospace;font-size:12px;background:#555;color:#eee;border:1px solid #777;padding:3px 12px;cursor:pointer;border-radius:4px;">⏸ Pause</button>
@@ -447,6 +450,9 @@
       </button>
       <button class="ctrl-btn" id="btn-missile" data-action="missile">
         🚀<span class="lbl">MSL</span>
+      </button>
+      <button class="ctrl-btn" id="btn-airstrike" data-action="airStrike">
+        ✈<span class="lbl">AIR</span>
       </button>
     </div>
 
