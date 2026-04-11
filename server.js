@@ -280,7 +280,7 @@ const BOT_NAMES = ['Rusty', 'Blaze', 'Shadow', 'Viper', 'Thunder', 'Ghost', 'Hav
 // missileStrategy: 'random' | 'opportunistic' (fires when enemy is in the open)
 const BOT_CFG = {
   easy: {
-    lookFwd: 62,  lookSide: 48,  stuckThresh: 22,
+    lookFwd: 62,  lookSide: 48,  stuckThresh: 8,
     fireAngleTol: 0.55,
     retreatHp: 0, seekCover: false,
     mineStrategy: 'random',    mineChance: 0.003,
@@ -288,7 +288,7 @@ const BOT_CFG = {
     predictShots: false, bulletAware: false, optimalRange: 0,
   },
   medium: {
-    lookFwd: 90,  lookSide: 65,  stuckThresh: 12,
+    lookFwd: 90,  lookSide: 65,  stuckThresh: 6,
     fireAngleTol: 0.22,
     retreatHp: 25, seekCover: true,
     mineStrategy: 'pursuit',          mineChance: 0.005,
@@ -531,20 +531,30 @@ function tickBotAI(bot) {
   inp.fire = inp.mine = inp.missile = false;
   inp.forward = inp.backward = inp.rotateLeft = inp.rotateRight = false;
 
+  // Feelers first — needed for smart stuck recovery
+  const feelers = botFeelers(bot, cfg);
+  const { fwdBlocked, leftBlocked, rightBlocked } = feelers;
+
   // ── Stuck detection ──────────────────────────────────────────────────────
   const moved = (bot.x - bot.botPrevX) ** 2 + (bot.y - bot.botPrevY) ** 2;
   if (bot.botWasTryingToMove && moved < 0.5) {
     if (++bot.botStuckTimer > cfg.stuckThresh) {
-      bot.botWander     = bot.angle + (Math.random() > 0.5 ? Math.PI / 2 : -Math.PI / 2)
-                          + (Math.random() - 0.5) * 0.6;
-      bot.botWanderTimer = 35 + Math.floor(Math.random() * 25);
+      // Use feelers to pick a direction that is actually open
+      if (!rightBlocked && !leftBlocked) {
+        bot.botWander = bot.angle + (Math.random() > 0.5 ? 1 : -1) * (Math.PI / 2 + (Math.random() - 0.5) * 0.4);
+      } else if (!rightBlocked) {
+        bot.botWander = bot.angle + Math.PI / 2 + (Math.random() - 0.5) * 0.3;
+      } else if (!leftBlocked) {
+        bot.botWander = bot.angle - Math.PI / 2 + (Math.random() - 0.5) * 0.3;
+      } else {
+        // Fully boxed — reverse direction and vary angle
+        bot.botWander = bot.angle + Math.PI + (Math.random() - 0.5) * 0.8;
+      }
+      bot.botWanderTimer = 55 + Math.floor(Math.random() * 35);
       bot.botStuckTimer  = 0;
     }
   } else { bot.botStuckTimer = 0; }
   bot.botPrevX = bot.x; bot.botPrevY = bot.y;
-
-  const feelers = botFeelers(bot, cfg);
-  const { fwdBlocked, leftBlocked, rightBlocked } = feelers;
 
   // ── Air strike evasion (highest priority — run perpendicular to jet path) ──
   for (const a of airStrikes) {
@@ -585,13 +595,21 @@ function tickBotAI(bot) {
   if (bot.botWanderTimer > 0) {
     bot.botWanderTimer--;
     const wd = normAngle(bot.botWander - bot.angle);
-    if (Math.abs(wd) > 0.12) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
-    else { inp.forward = !fwdBlocked; }
+    if (Math.abs(wd) > 0.12) {
+      inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0;
+    } else {
+      inp.forward = !fwdBlocked;
+    }
     if (fwdBlocked) {
       inp.forward = false;
-      if (!rightBlocked) inp.rotateRight = true;
-      else if (!leftBlocked) inp.rotateLeft = true;
-      else inp.backward = true;
+      if (!rightBlocked)     inp.rotateRight = true;
+      else if (!leftBlocked) inp.rotateLeft  = true;
+      else {
+        // Completely boxed — back up and pick a new escape direction immediately
+        inp.backward = true;
+        bot.botWander = bot.angle + Math.PI + (Math.random() - 0.5) * 1.0;
+        bot.botWanderTimer = Math.max(bot.botWanderTimer, 20);
+      }
     }
     bot.botWasTryingToMove = inp.forward || inp.backward;
     return;
@@ -736,8 +754,16 @@ function tickBotAI(bot) {
   } else {
     // ── No targets — wander ───────────────────────────────────────────────
     if (--bot.botWanderTimer <= 0) {
-      bot.botWander     = Math.random() * Math.PI * 2;
-      bot.botWanderTimer = 90 + Math.floor(Math.random() * 60);
+      // Prefer directions that aren't immediately blocked
+      const candidates = [
+        bot.angle + Math.PI / 2,
+        bot.angle - Math.PI / 2,
+        bot.angle + Math.PI / 4,
+        bot.angle - Math.PI / 4,
+        Math.random() * Math.PI * 2,
+      ];
+      bot.botWander     = candidates[Math.floor(Math.random() * candidates.length)];
+      bot.botWanderTimer = 100 + Math.floor(Math.random() * 60);
     }
     const wd = normAngle(bot.botWander - bot.angle);
     if (Math.abs(wd) > 0.15) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
@@ -746,7 +772,12 @@ function tickBotAI(bot) {
       inp.forward = false;
       if (!rightBlocked)     inp.rotateRight = true;
       else if (!leftBlocked) inp.rotateLeft  = true;
-      else { inp.backward = true; bot.botWanderTimer = 12; }
+      else {
+        inp.backward = true;
+        // Reset wander direction immediately so next clear of fwdBlocked goes somewhere new
+        bot.botWander = bot.angle + Math.PI + (Math.random() - 0.5) * 1.0;
+        bot.botWanderTimer = 25;
+      }
     }
   }
 
