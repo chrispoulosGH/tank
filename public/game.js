@@ -114,6 +114,7 @@ window.exitToMenu = function() {
 };
 
 window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.key === 'Escape' || e.key.toLowerCase() === 'p') {
     if (ws) { togglePause(); e.preventDefault(); return; }
   }
@@ -125,6 +126,7 @@ window.addEventListener('keydown', e => {
   if (action) { keys[action] = true; e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   const action = KEY_MAP[e.key.toLowerCase()];
   if (action) { keys[action] = false; e.preventDefault(); }
 });
