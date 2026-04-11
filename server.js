@@ -265,6 +265,110 @@ function tickRound() {
 
 const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#e91e63'];
 
+// ─── Bot AI ───────────────────────────────────────────────────────────────────
+
+const BOT_NAMES = ['Rusty', 'Blaze', 'Shadow', 'Viper', 'Thunder', 'Ghost', 'Havoc', 'Storm'];
+
+const BOT_CFG = {
+  easy:   { aimError: 0.50, fireRange: 280, mineChance: 0,     missileChance: 0     },
+  medium: { aimError: 0.22, fireRange: 500, mineChance: 0.004, missileChance: 0.006 },
+  hard:   { aimError: 0.05, fireRange: 900, mineChance: 0.007, missileChance: 0.014 }
+};
+
+function createBot(id, ownerId, difficulty, nameIdx) {
+  const spawn = randomSpawn();
+  return {
+    id, isBot: true, ownerId, difficulty,
+    ws: null,
+    name: BOT_NAMES[nameIdx % BOT_NAMES.length],
+    color: PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length],
+    x: spawn.x, y: spawn.y, angle: spawn.angle,
+    hp: 100, score: 0, alive: true,
+    respawnTimer: 0, fireCooldown: 0,
+    minesLeft: MAX_MINES, mineCooldown: 0, missileReady: true,
+    // Bot-only state
+    botWander: Math.random() * Math.PI * 2,
+    botWanderTimer: 0,
+    botPrevX: spawn.x, botPrevY: spawn.y, botStuckTimer: 0,
+    input: { forward: false, backward: false, rotateLeft: false, rotateRight: false, fire: false, mine: false, missile: false }
+  };
+}
+
+function tickBotAI(bot) {
+  if (!bot.alive) return;
+  const cfg = BOT_CFG[bot.difficulty] || BOT_CFG.medium;
+  const inp = bot.input;
+
+  // Find closest alive enemy
+  let target = null, bestDist = Infinity;
+  for (const [, p] of players) {
+    if (p.id === bot.id || !p.alive) continue;
+    const dx = p.x - bot.x, dy = p.y - bot.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) { bestDist = d; target = p; }
+  }
+
+  inp.fire = inp.mine = inp.missile = false;
+  inp.forward = inp.backward = inp.rotateLeft = inp.rotateRight = false;
+
+  // Detect stuck (tried to move but didn't)
+  const moved = (bot.x - bot.botPrevX) ** 2 + (bot.y - bot.botPrevY) ** 2;
+  if (moved < 0.1 && inp.forward) {
+    bot.botStuckTimer++;
+    if (bot.botStuckTimer > 15) {
+      bot.botWander = Math.random() * Math.PI * 2;
+      bot.botWanderTimer = 30 + Math.floor(Math.random() * 30);
+      bot.botStuckTimer = 0;
+    }
+  } else {
+    bot.botStuckTimer = 0;
+  }
+  bot.botPrevX = bot.x; bot.botPrevY = bot.y;
+
+  if (bot.botWanderTimer > 0) {
+    // Wander override (unstuck)
+    bot.botWanderTimer--;
+    let wd = bot.botWander - bot.angle;
+    while (wd >  Math.PI) wd -= Math.PI * 2;
+    while (wd < -Math.PI) wd += Math.PI * 2;
+    if (Math.abs(wd) > 0.15) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
+    inp.forward = true;
+    return;
+  }
+
+  if (target) {
+    const dist = Math.sqrt(bestDist);
+
+    // Aim with noise proportional to difficulty
+    const rawAngle = Math.atan2(target.y - bot.y, target.x - bot.x);
+    const aimAngle = rawAngle + (Math.random() - 0.5) * cfg.aimError;
+    let diff = aimAngle - bot.angle;
+    while (diff >  Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+
+    inp.rotateRight = diff > 0.08;
+    inp.rotateLeft  = diff < -0.08;
+    inp.forward = dist > TANK_RADIUS * 3.5;
+
+    if (Math.abs(diff) < 0.28 && dist < cfg.fireRange) inp.fire = true;
+    if (cfg.mineChance   > 0 && bot.minesLeft > 0      && Math.random() < cfg.mineChance)   inp.mine    = true;
+    if (cfg.missileChance > 0 && bot.missileReady       && Math.random() < cfg.missileChance) inp.missile = true;
+
+  } else {
+    // No targets — wander
+    bot.botWanderTimer--;
+    if (bot.botWanderTimer <= 0) {
+      bot.botWander = Math.random() * Math.PI * 2;
+      bot.botWanderTimer = 90 + Math.floor(Math.random() * 60);
+    }
+    let wd = bot.botWander - bot.angle;
+    while (wd >  Math.PI) wd -= Math.PI * 2;
+    while (wd < -Math.PI) wd += Math.PI * 2;
+    if (Math.abs(wd) > 0.15) { inp.rotateRight = wd > 0; inp.rotateLeft = wd < 0; }
+    inp.forward = true;
+  }
+}
+
 function randomSpawn() {
   for (let attempt = 0; attempt < 100; attempt++) {
     const x = 60 + Math.random() * (WORLD_W - 120);
@@ -304,6 +408,11 @@ function tick() {
   if (roundPhase !== 'active') {
     broadcastState();
     return;
+  }
+
+  // Run bot AI before processing inputs
+  for (const [, p] of players) {
+    if (p.isBot) tickBotAI(p);
   }
 
   // Process players
@@ -497,7 +606,8 @@ function broadcastState() {
       hp: p.hp, score: p.score, alive: p.alive,
       respawnTimer: p.respawnTimer, minesLeft: p.minesLeft,
       missileReady: p.missileReady,
-      roundWins: roundWins.get(p.id) || 0
+      roundWins: roundWins.get(p.id) || 0,
+      isBot: !!p.isBot
     })),
     bullets: bullets.map(b => ({ id: b.id, x: b.x, y: b.y, ownerId: b.ownerId })),
     mines:    mines.map(m => ({ id: m.id, x: m.x, y: m.y, color: m.color, armed: m.armedTimer === 0 })),
@@ -513,7 +623,7 @@ function broadcastState() {
   });
 
   for (const [, p] of players) {
-    if (p.ws.readyState === WebSocket.OPEN) p.ws.send(state);
+    if (!p.isBot && p.ws && p.ws.readyState === WebSocket.OPEN) p.ws.send(state);
   }
 }
 
@@ -524,12 +634,12 @@ wss.on('connection', ws => {
 
   ws.send(JSON.stringify({
     type: 'init', id, worldW: WORLD_W, worldH: WORLD_H, obstacles,
-    peers: Array.from(players.keys()).filter(pid => pid !== id)
+    peers: Array.from(players.values()).filter(p => !p.isBot && p.id !== id).map(p => p.id)
   }));
 
-  // Tell existing players a new peer joined (for WebRTC)
+  // Tell existing real players a new peer joined (for WebRTC)
   for (const [pid, p] of players) {
-    if (pid !== id && p.ws.readyState === WebSocket.OPEN)
+    if (pid !== id && !p.isBot && p.ws && p.ws.readyState === WebSocket.OPEN)
       p.ws.send(JSON.stringify({ type: 'peer_joined', id }));
   }
 
@@ -549,6 +659,15 @@ wss.on('connection', ws => {
         p.input.missile    = !!msg.missile;
       } else if (msg.type === 'name' && typeof msg.name === 'string') {
         p.name = msg.name.trim().substring(0, 16) || `Player ${id}`;
+        // Single-player: spawn AI bots owned by this player
+        if (msg.bots && Number.isInteger(msg.bots) && msg.bots >= 1) {
+          const count = Math.min(msg.bots, 5);
+          const diff  = ['easy', 'medium', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'medium';
+          for (let i = 0; i < count; i++) {
+            const botId = nextPlayerId++;
+            players.set(botId, createBot(botId, id, diff, i));
+          }
+        }
       } else if (msg.type === 'rtc_offer' || msg.type === 'rtc_answer' || msg.type === 'rtc_ice') {
         // Relay WebRTC signaling to target player
         const target = players.get(msg.to);
@@ -565,10 +684,14 @@ wss.on('connection', ws => {
   });
 
   ws.on('close', () => {
+    // Remove any bots owned by this player
+    for (const [pid, p] of players) {
+      if (p.isBot && p.ownerId === id) players.delete(pid);
+    }
     players.delete(id);
-    // Tell remaining players this peer left (for WebRTC cleanup)
+    // Tell remaining real players this peer left (for WebRTC cleanup)
     for (const [, p] of players) {
-      if (p.ws.readyState === WebSocket.OPEN)
+      if (!p.isBot && p.ws && p.ws.readyState === WebSocket.OPEN)
         p.ws.send(JSON.stringify({ type: 'peer_left', id }));
     }
   });

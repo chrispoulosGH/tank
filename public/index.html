@@ -71,6 +71,35 @@
       letter-spacing: 2px;
     }
     #join-btn:active { background: #c0392b; }
+    .mode-tab {
+      flex: 1;
+      font-family: 'Courier New', monospace;
+      font-size: clamp(10px, 2vw, 12px);
+      padding: 8px 4px;
+      border: none;
+      background: #1a1a1a;
+      color: #666;
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-tab.active { background: #333; color: #f39c12; }
+    .cnt-btn, .diff-btn {
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      padding: 6px 14px;
+      border-radius: 5px;
+      border: 1px solid #444;
+      background: #1a1a1a;
+      color: #888;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .cnt-btn.active, .diff-btn.active {
+      background: #2c3e50;
+      border-color: #f39c12;
+      color: #f39c12;
+    }
     .key-hint {
       margin-top: 24px;
       color: #555;
@@ -290,6 +319,31 @@
   </div>
   <input id="name-input" type="text" maxlength="16" placeholder="Your callsign"
          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+
+  <!-- Mode tabs -->
+  <div id="mode-tabs" style="display:flex;gap:0;margin:14px auto 0;border:2px solid #444;border-radius:6px;overflow:hidden;width:min(280px,80vw);">
+    <button class="mode-tab active" id="tab-multi" onclick="setMode('multi')">⚔️ MULTIPLAYER</button>
+    <button class="mode-tab"        id="tab-solo"  onclick="setMode('solo')">🤖 SINGLE PLAYER</button>
+  </div>
+
+  <!-- Single-player options (hidden by default) -->
+  <div id="solo-opts" style="display:none;margin-top:12px;text-align:center;">
+    <div style="margin-bottom:8px;font-size:12px;color:#777;letter-spacing:1px;">ENEMY TANKS</div>
+    <div id="bot-count-btns" style="display:flex;gap:6px;justify-content:center;">
+      <button class="cnt-btn active" data-n="1">1</button>
+      <button class="cnt-btn"        data-n="2">2</button>
+      <button class="cnt-btn"        data-n="3">3</button>
+      <button class="cnt-btn"        data-n="4">4</button>
+      <button class="cnt-btn"        data-n="5">5</button>
+    </div>
+    <div style="margin:10px 0 6px;font-size:12px;color:#777;letter-spacing:1px;">DIFFICULTY</div>
+    <div id="diff-btns" style="display:flex;gap:6px;justify-content:center;">
+      <button class="diff-btn"        data-d="easy">EASY</button>
+      <button class="diff-btn active" data-d="medium">MEDIUM</button>
+      <button class="diff-btn"        data-d="hard">HARD</button>
+    </div>
+  </div>
+
   <button id="join-btn">JOIN BATTLE</button>
   <div class="key-hint">
     <span>W</span> Forward &nbsp;
@@ -362,6 +416,34 @@
     const url = location.href.replace(/\/$/, '');
     document.getElementById('qr-code').src = '/api/qr?url=' + encodeURIComponent(url);
   })();
+
+  // Mode / bot selection UI
+  window.gameMode   = 'multi';
+  window.botCount   = 1;
+  window.botDiff    = 'medium';
+
+  window.setMode = function(mode) {
+    window.gameMode = mode;
+    document.getElementById('tab-multi').classList.toggle('active', mode === 'multi');
+    document.getElementById('tab-solo').classList.toggle('active',  mode === 'solo');
+    document.getElementById('solo-opts').style.display = mode === 'solo' ? 'block' : 'none';
+  };
+
+  document.querySelectorAll('.cnt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.cnt-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window.botCount = parseInt(btn.dataset.n, 10);
+    });
+  });
+
+  document.querySelectorAll('.diff-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window.botDiff = btn.dataset.d;
+    });
+  });
 </script>
 <script src="voice.js"></script>
 <script src="game.js"></script>

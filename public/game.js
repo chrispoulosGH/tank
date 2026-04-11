@@ -127,7 +127,12 @@ function joinGame() {
   ws = new WebSocket(`${proto}//${location.host}`);
 
   ws.onopen = () => {
-    ws.send(JSON.stringify({ type: 'name', name }));
+    const msg = { type: 'name', name };
+    if (window.gameMode === 'solo') {
+      msg.bots       = window.botCount || 1;
+      msg.difficulty = window.botDiff  || 'medium';
+    }
+    ws.send(JSON.stringify(msg));
   };
 
   ws.onmessage = e => {
@@ -526,9 +531,9 @@ function drawTank(p) {
 
   // Name label
   ctx.font = isMe ? 'bold 11px Courier New' : '10px Courier New';
-  ctx.fillStyle = isMe ? '#fff' : '#ccc';
+  ctx.fillStyle = isMe ? '#fff' : (p.isBot ? '#f39c12' : '#ccc');
   ctx.textAlign = 'center';
-  ctx.fillText(p.name, p.x, p.y - 36);
+  ctx.fillText(p.isBot ? `🤖 ${p.name}` : p.name, p.x, p.y - 36);
 
   // Speaking indicator
   if (Voice.getSpeakingSet().has(p.id)) {
