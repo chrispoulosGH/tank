@@ -1158,8 +1158,10 @@ function drawScoreboard(players, round) {
   ctx.fillStyle = '#777';
   ctx.fillText('PLAYER', sx + padX, sy + padY + Math.round(26 * fs));
   ctx.textAlign = 'center';
-  ctx.fillText('KILLS', sx + w - Math.round(46 * fs), sy + padY + Math.round(26 * fs));
-  ctx.fillText('WINS', sx + w - padX - 4, sy + padY + Math.round(26 * fs));
+  const killsX = sx + w - Math.round(56 * fs);
+  const winsX  = sx + w - Math.round(22 * fs);
+  ctx.fillText('KILLS', killsX, sy + padY + Math.round(26 * fs));
+  ctx.fillText('WINS',  winsX,  sy + padY + Math.round(26 * fs));
   ctx.textAlign = 'left';
 
   sorted.forEach((p, i) => {
@@ -1175,11 +1177,11 @@ function drawScoreboard(players, round) {
 
     ctx.fillStyle = isMe ? '#fff' : '#aaa';
     ctx.textAlign = 'center';
-    ctx.fillText(p.score, sx + w - Math.round(46 * fs), y);
+    ctx.fillText(p.score, killsX, y);
 
     // Round wins as filled stars
     ctx.fillStyle = wins >= 3 ? '#f1c40f' : '#aaa';
-    ctx.fillText('★'.repeat(wins) + '☆'.repeat(Math.max(0, 3 - wins)), sx + w - padX - 4, y);
+    ctx.fillText('★'.repeat(wins) + '☆'.repeat(Math.max(0, 3 - wins)), winsX, y);
     ctx.textAlign = 'left';
   });
 }
