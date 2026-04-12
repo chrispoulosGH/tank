@@ -133,7 +133,8 @@
         padding: 5px 10px;
         font-size: 11px;
       }
-      #bot-count-btns, #diff-btns { gap: 4px !important; }
+      #bot-count-btns, #diff-btns, #round-dur-btns, #wins-btns { gap: 4px !important; }
+      #match-opts { margin-top: 6px !important; }
     }
     #name-input {
       font-family: 'Courier New', monospace;
@@ -510,6 +511,22 @@
           <button class="diff-btn"        data-d="hard">HARD</button>
         </div>
       </div>
+
+      <!-- Match settings — always visible -->
+      <div id="match-opts" style="margin-top:12px;text-align:center;">
+        <div style="margin-bottom:8px;font-size:12px;color:#777;letter-spacing:1px;">ROUND TIME</div>
+        <div id="round-dur-btns" style="display:flex;gap:6px;justify-content:center;">
+          <button class="diff-btn"        data-s="60">1 MIN</button>
+          <button class="diff-btn active" data-s="120">2 MIN</button>
+          <button class="diff-btn"        data-s="180">3 MIN</button>
+        </div>
+        <div style="margin:10px 0 6px;font-size:12px;color:#777;letter-spacing:1px;">WINS TO MATCH</div>
+        <div id="wins-btns" style="display:flex;gap:6px;justify-content:center;">
+          <button class="diff-btn"        data-w="2">2</button>
+          <button class="diff-btn active" data-w="3">3</button>
+          <button class="diff-btn"        data-w="5">5</button>
+        </div>
+      </div>
     </div>
 
   </div><!-- /menu-cols -->
@@ -599,9 +616,11 @@
   })();
 
   // Mode / bot selection UI — default to single player
-  window.gameMode   = 'solo';
-  window.botCount   = 1;
-  window.botDiff    = 'medium';
+  window.gameMode      = 'solo';
+  window.botCount      = 1;
+  window.botDiff       = 'medium';
+  window.roundDuration = 120; // seconds
+  window.winsToMatch   = 3;
   document.getElementById('tab-solo').classList.add('active');
   document.getElementById('tab-multi').classList.remove('active');
   document.getElementById('solo-opts').style.display = 'block';
@@ -621,11 +640,27 @@
     });
   });
 
-  document.querySelectorAll('.diff-btn').forEach(btn => {
+  document.querySelectorAll('#diff-btns .diff-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#diff-btns .diff-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       window.botDiff = btn.dataset.d;
+    });
+  });
+
+  document.querySelectorAll('#round-dur-btns .diff-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#round-dur-btns .diff-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window.roundDuration = parseInt(btn.dataset.s, 10);
+    });
+  });
+
+  document.querySelectorAll('#wins-btns .diff-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#wins-btns .diff-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      window.winsToMatch = parseInt(btn.dataset.w, 10);
     });
   });
 </script>

@@ -23,10 +23,10 @@ const MINE_RADIUS = 14;
 const MINE_ARMING_TICKS = 45;
 const MINE_COOLDOWN_TICKS = 20;
 const MINE_DAMAGE = 100;
-const ROUND_DURATION_TICKS  = 180 * 30;
+const ROUND_DURATION_DEFAULT = 120 * 30; // 2 min default
 const BETWEEN_ROUND_TICKS   = 6  * 30;
 const MATCH_OVER_TICKS      = 10 * 30;
-const ROUNDS_TO_WIN_MATCH   = 3;
+const ROUNDS_TO_WIN_DEFAULT  = 3;
 const MISSILE_SPEED         = 6;            // px per tick
 const MISSILE_TURN_RATE     = 0.07;         // radians per tick — limits how tightly it curves
 const MISSILE_LIFETIME      = 10 * 30;      // 10 seconds before self-destruct
@@ -189,8 +189,10 @@ let nextMissileId = 1;
 let nextAirStrikeId = 1;
 
 // ─── Round state ──────────────────────────────────────────────────────────────
+let roundDurationTicks = ROUND_DURATION_DEFAULT; // configurable per match
+let roundsToWinMatch   = ROUNDS_TO_WIN_DEFAULT;  // configurable per match
 let roundNumber    = 0;
-let roundTicksLeft = ROUND_DURATION_TICKS;
+let roundTicksLeft = roundDurationTicks;
 let roundPhase     = 'lobby';   // 'lobby' | 'active' | 'between' | 'match_over'
 let pauseTicks     = 0;
 let roundWins      = new Map(); // playerId -> round wins
@@ -206,12 +208,14 @@ let inactivityTicks = 0;     // ticks since last player action during 'active' p
 
 function enterLobby() {
   roundNumber    = 0;
-  roundTicksLeft = ROUND_DURATION_TICKS;
+  roundTicksLeft = roundDurationTicks;
   roundPhase     = 'lobby';
   pauseTicks     = 0;
   roundWins.clear();
   roundHistory   = [];
   matchWinnerId  = null;
+  roundDurationTicks = ROUND_DURATION_DEFAULT;
+  roundsToWinMatch   = ROUNDS_TO_WIN_DEFAULT;
   matchMode      = null;
   matchLocked    = false;
   inactivityTicks = 0;
@@ -230,7 +234,7 @@ function startMatch() {
   matchLocked     = true;
   lobbyActive     = false;
   roundNumber     = 1;
-  roundTicksLeft  = ROUND_DURATION_TICKS;
+  roundTicksLeft  = roundDurationTicks;
   roundPhase      = 'active';
   inactivityTicks = 0;
   for (const [, p] of players) p.score = 0;
@@ -259,7 +263,7 @@ function endRound() {
     roundWins.set(winner.id, wins);
     roundHistory.push({ num: roundNumber, winnerId: winner.id, winnerName: winner.name, color: winner.color });
 
-    if (wins >= ROUNDS_TO_WIN_MATCH) {
+    if (wins >= roundsToWinMatch) {
       matchWinnerId = winner.id;
       roundPhase = 'match_over';
       pauseTicks  = MATCH_OVER_TICKS;
@@ -276,7 +280,7 @@ function endRound() {
 
 function startNextRound() {
   roundNumber++;
-  roundTicksLeft = ROUND_DURATION_TICKS;
+  roundTicksLeft = roundDurationTicks;
   roundPhase = 'active';
   for (const [, p] of players) p.score = 0;
   respawnAll();
@@ -1165,7 +1169,19 @@ wss.on('connection', ws => {
         p.input.missile    = !!msg.missile;
         p.input.airStrike  = !!msg.airStrike;
       } else if (msg.type === 'name' && typeof msg.name === 'string') {
-        p.name = msg.name.trim().substring(0, 16) || `Player ${id}`;
+        // Enforce unique callsign
+        const requestedName = msg.name.trim().substring(0, 16) || `Player ${id}`;
+        const nameTaken = Array.from(players.values()).some(
+          other => other.id !== id && !other.isBot &&
+                   other.name.toLowerCase() === requestedName.toLowerCase()
+        );
+        if (nameTaken) {
+          p.ws.send(JSON.stringify({ type: 'rejected', reason: 'name_taken' }));
+          players.delete(id);
+          return;
+        }
+        p.name = requestedName;
+
         // Single-player: spawn AI bots owned by this player (bypasses lobby)
         if (msg.bots && msg.bots >= 1) {
           if (matchMode === 'multi') {
@@ -1175,7 +1191,10 @@ wss.on('connection', ws => {
           }
           const count = Math.min(Math.floor(msg.bots), 5);
           const diff  = ['easy', 'medium', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'medium';
-          console.log(`[SP] Player ${id} "${p.name}" spawning ${count} ${diff} bots`);
+          // Apply match settings from the solo player
+          if (msg.roundDuration >= 30)  roundDurationTicks = Math.min(msg.roundDuration, 600) * 30;
+          if (msg.winsToMatch   >= 1)   roundsToWinMatch   = Math.min(Math.floor(msg.winsToMatch), 10);
+          console.log(`[SP] Player ${id} "${p.name}" spawning ${count} ${diff} bots (${roundDurationTicks/30}s rounds, ${roundsToWinMatch} wins)`);
           for (let i = 0; i < count; i++) {
             const botId = nextPlayerId++;
             players.set(botId, createBot(botId, id, diff, i));
@@ -1192,8 +1211,10 @@ wss.on('connection', ws => {
           }
           // If we somehow ended up outside lobby phase, reset to one
           if (roundPhase !== 'lobby') enterLobby();
-          // Start countdown on first joiner; subsequent joiners just slide in
+          // First joiner sets the match rules and starts the countdown
           if (!lobbyActive) {
+            if (msg.roundDuration >= 30) roundDurationTicks = Math.min(msg.roundDuration, 600) * 30;
+            if (msg.winsToMatch   >= 1)  roundsToWinMatch   = Math.min(Math.floor(msg.winsToMatch), 10);
             matchMode   = 'multi';
             lobbyTicks  = LOBBY_COUNTDOWN_TICKS;
             lobbyActive = true;

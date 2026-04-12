@@ -242,7 +242,9 @@ function joinGame() {
   ws = new WebSocket(`${proto}//${location.host}`);
 
   ws.onopen = () => {
-    const msg = { type: 'name', name };
+    const msg = { type: 'name', name,
+      roundDuration: window.roundDuration || 120,
+      winsToMatch:   window.winsToMatch   || 3 };
     if (window.gameMode === 'solo') {
       msg.bots       = window.botCount || 1;
       msg.difficulty = window.botDiff  || 'medium';
@@ -268,7 +270,13 @@ function joinGame() {
       document.getElementById('game-wrap').style.display  = 'none';
       document.getElementById('name-screen').style.display = '';
       const hint = document.getElementById('join-hint');
-      if (hint) { hint.textContent = '⚠ Match in progress — wait for next round'; hint.style.color = '#e74c3c'; }
+      if (hint) {
+        hint.style.color = '#e74c3c';
+        if (msg.reason === 'name_taken')
+          hint.textContent = '⚠ That callsign is already in use — choose another';
+        else
+          hint.textContent = '⚠ Match in progress — wait for next round';
+      }
     } else if (msg.type === 'go_to_menu') {
       ws.close();
       document.getElementById('game-wrap').style.display  = 'none';
