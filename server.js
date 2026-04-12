@@ -1258,12 +1258,9 @@ wss.on('connection', ws => {
       if (!p.isBot && p.ws && p.ws.readyState === WebSocket.OPEN)
         p.ws.send(JSON.stringify({ type: 'peer_left', id }));
     }
-    // If no human players remain, reset everything to a fresh lobby
+    // If no human players remain, fully reset to a fresh lobby (clears matchMode etc.)
     const humansLeft = Array.from(players.values()).filter(p => !p.isBot).length;
-    if (humansLeft === 0) {
-      if (roundPhase !== 'lobby') enterLobby();
-      else { lobbyActive = false; lobbyTicks = LOBBY_COUNTDOWN_TICKS; }
-    }
+    if (humansLeft === 0) enterLobby();
   });
 });
 
