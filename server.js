@@ -1170,6 +1170,8 @@ wss.on('connection', ws => {
             const botId = nextPlayerId++;
             players.set(botId, createBot(botId, id, diff, i));
           }
+          // Solo mode skips the lobby — start the match immediately
+          startMatch();
         } else {
           // Multiplayer: enforce lobby / lock rules
           if (matchLocked) {
