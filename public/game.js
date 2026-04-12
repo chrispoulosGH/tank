@@ -229,6 +229,8 @@ document.getElementById('name-input').addEventListener('keydown', e => {
 
 function joinGame() {
   getAudio(); // initialise AudioContext during user gesture so it isn't blocked
+  const hint = document.getElementById('join-hint');
+  if (hint) { hint.textContent = ''; hint.style.color = ''; }
   const name = document.getElementById('name-input').value.trim() || 'Tank';
   document.getElementById('name-screen').style.display = 'none';
   document.getElementById('game-wrap').style.display = 'flex';
@@ -261,6 +263,12 @@ function joinGame() {
       Voice.init(ws, myId, msg.peers || []);
     } else if (msg.type === 'state') {
       gameState = msg;
+    } else if (msg.type === 'rejected') {
+      ws.close();
+      document.getElementById('game-wrap').style.display  = 'none';
+      document.getElementById('name-screen').style.display = '';
+      const hint = document.getElementById('join-hint');
+      if (hint) { hint.textContent = '⚠ Match in progress — wait for next round'; hint.style.color = '#e74c3c'; }
     } else {
       Voice.handle(msg);
     }
@@ -801,7 +809,8 @@ function render(dt = 0) {
 
   // Round timer & phase overlays
   if (round) {
-    drawRoundTimer(round);
+    if (round.phase === 'lobby')      drawLobbyOverlay(round);
+    else                              drawRoundTimer(round);
     if (round.phase === 'between')    drawBetweenRoundOverlay(round);
     if (round.phase === 'match_over') drawMatchOverOverlay(round, players);
   }
@@ -1177,6 +1186,34 @@ function drawRoundTimer(round) {
   if (urgent && Math.floor(Date.now() / 500) % 2 === 0) ctx.fillStyle = '#ff6b6b';
   ctx.fillText(timeStr, worldW / 2, 52);
   ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawLobbyOverlay(round) {
+  const secsLeft = Math.ceil(round.lobbyTicks / 30);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.70)';
+  ctx.fillRect(0, 0, worldW, worldH);
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)';
+  ctx.shadowBlur  = 10;
+
+  ctx.font = 'bold 42px Courier New';
+  ctx.fillStyle = '#f39c12';
+  ctx.fillText('WAITING FOR PLAYERS', worldW / 2, worldH / 2 - 70);
+
+  // Big countdown number
+  const pulse = 0.88 + 0.12 * Math.sin(Date.now() / 400);
+  ctx.font = `bold ${Math.round(96 * pulse)}px Courier New`;
+  ctx.fillStyle = secsLeft <= 5 ? '#e74c3c' : '#ffffff';
+  ctx.fillText(secsLeft, worldW / 2, worldH / 2 + 30);
+
+  ctx.font = 'bold 18px Courier New';
+  ctx.fillStyle = '#888';
+  ctx.fillText('Game starts when countdown reaches 0  ·  Others may join now', worldW / 2, worldH / 2 + 74);
+
   ctx.restore();
 }
 

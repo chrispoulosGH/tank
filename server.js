@@ -31,6 +31,8 @@ const MISSILE_SPEED         = 6;            // px per tick
 const MISSILE_TURN_RATE     = 0.07;         // radians per tick — limits how tightly it curves
 const MISSILE_LIFETIME      = 10 * 30;      // 10 seconds before self-destruct
 const MISSILE_BLAST_RADIUS  = Math.round(Math.sqrt(WORLD_W * WORLD_H * 0.05 / Math.PI)); // ≈124 px
+const LOBBY_COUNTDOWN_TICKS    = 15 * 30;  // 450 ticks = 15 s join window
+const INACTIVITY_TIMEOUT_TICKS = 60 * 30;  // 1800 ticks = 1 min no-activity limit
 
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css' };
 
@@ -187,13 +189,58 @@ let nextMissileId = 1;
 let nextAirStrikeId = 1;
 
 // ─── Round state ──────────────────────────────────────────────────────────────
-let roundNumber   = 1;
+let roundNumber    = 0;
 let roundTicksLeft = ROUND_DURATION_TICKS;
-let roundPhase    = 'active';   // 'active' | 'between' | 'match_over'
-let pauseTicks    = 0;
-let roundWins     = new Map();  // playerId -> round wins
-let roundHistory  = [];         // [{num, winnerId, winnerName, color}]
-let matchWinnerId = null;
+let roundPhase     = 'lobby';   // 'lobby' | 'active' | 'between' | 'match_over'
+let pauseTicks     = 0;
+let roundWins      = new Map(); // playerId -> round wins
+let roundHistory   = [];        // [{num, winnerId, winnerName, color}]
+let matchWinnerId  = null;
+
+// ─── Match / lobby state ───────────────────────────────────────────────────────
+let matchLocked     = false; // true once match starts — blocks new multi joiners
+let lobbyTicks      = LOBBY_COUNTDOWN_TICKS; // ticks remaining in join window
+let lobbyActive     = false; // true when countdown is running
+let inactivityTicks = 0;     // ticks since last player action during 'active' phase
+
+function enterLobby() {
+  roundNumber    = 0;
+  roundTicksLeft = ROUND_DURATION_TICKS;
+  roundPhase     = 'lobby';
+  pauseTicks     = 0;
+  roundWins.clear();
+  roundHistory   = [];
+  matchWinnerId  = null;
+  matchLocked    = false;
+  inactivityTicks = 0;
+  lobbyActive    = false;
+  lobbyTicks     = LOBBY_COUNTDOWN_TICKS;
+  bullets = []; mines = []; missiles = []; airStrikes = [];
+  for (const [, p] of players) p.score = 0;
+  // Respawn remaining humans and start countdown if any are present
+  const humans = Array.from(players.values()).filter(p => !p.isBot);
+  if (humans.length > 0) {
+    for (const p of humans) {
+      const s = randomSpawn();
+      p.x = s.x; p.y = s.y; p.angle = s.angle;
+      p.hp = 100; p.alive = true;
+      p.minesLeft = MAX_MINES; p.missileReady = true; p.airStrikeReady = true;
+      p.fireCooldown = 0; p.mineCooldown = 0;
+    }
+    lobbyActive = true;
+  }
+}
+
+function startMatch() {
+  matchLocked     = true;
+  lobbyActive     = false;
+  roundNumber     = 1;
+  roundTicksLeft  = ROUND_DURATION_TICKS;
+  roundPhase      = 'active';
+  inactivityTicks = 0;
+  for (const [, p] of players) p.score = 0;
+  respawnAll();
+}
 
 function respawnAll() {
   for (const [, p] of players) {
@@ -240,26 +287,25 @@ function startNextRound() {
   respawnAll();
 }
 
-function resetMatch() {
-  roundNumber   = 1;
-  roundTicksLeft = ROUND_DURATION_TICKS;
-  roundPhase    = 'active';
-  pauseTicks    = 0;
-  roundWins.clear();
-  roundHistory  = [];
-  matchWinnerId = null;
-  for (const [, p] of players) p.score = 0;
-  respawnAll();
-}
 
 function tickRound() {
+  if (roundPhase === 'lobby') {
+    if (lobbyActive) {
+      lobbyTicks--;
+      if (lobbyTicks <= 0) startMatch();
+    }
+    return;
+  }
+
   if (roundPhase === 'active') {
+    inactivityTicks++;
+    if (inactivityTicks >= INACTIVITY_TIMEOUT_TICKS) { enterLobby(); return; }
     roundTicksLeft--;
     if (roundTicksLeft <= 0) endRound();
   } else {
     pauseTicks--;
     if (pauseTicks <= 0) {
-      if (roundPhase === 'match_over') resetMatch();
+      if (roundPhase === 'match_over') enterLobby();
       else startNextRound();
     }
   }
@@ -1065,7 +1111,9 @@ function broadcastState() {
       phase:         roundPhase,
       pauseTicks,
       history:       roundHistory,
-      matchWinnerId
+      matchWinnerId,
+      lobbyTicks,
+      matchLocked
     }
   });
 
@@ -1097,6 +1145,12 @@ wss.on('connection', ws => {
       const p = players.get(id);
 
       if (msg.type === 'input') {
+        // Any movement or action resets the inactivity clock
+        if (roundPhase === 'active' &&
+            (msg.forward || msg.backward || msg.rotateLeft || msg.rotateRight ||
+             msg.fire || msg.mine || msg.missile || msg.airStrike)) {
+          inactivityTicks = 0;
+        }
         p.input.forward    = !!msg.forward;
         p.input.backward   = !!msg.backward;
         p.input.rotateLeft = !!msg.rotateLeft;
@@ -1107,7 +1161,7 @@ wss.on('connection', ws => {
         p.input.airStrike  = !!msg.airStrike;
       } else if (msg.type === 'name' && typeof msg.name === 'string') {
         p.name = msg.name.trim().substring(0, 16) || `Player ${id}`;
-        // Single-player: spawn AI bots owned by this player
+        // Single-player: spawn AI bots owned by this player (bypasses lobby)
         if (msg.bots && msg.bots >= 1) {
           const count = Math.min(Math.floor(msg.bots), 5);
           const diff  = ['easy', 'medium', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'medium';
@@ -1116,6 +1170,25 @@ wss.on('connection', ws => {
             const botId = nextPlayerId++;
             players.set(botId, createBot(botId, id, diff, i));
           }
+        } else {
+          // Multiplayer: enforce lobby / lock rules
+          if (matchLocked) {
+            p.ws.send(JSON.stringify({ type: 'rejected', reason: 'match_in_progress' }));
+            players.delete(id);
+            return;
+          }
+          // If we somehow ended up outside lobby phase, reset to one
+          if (roundPhase !== 'lobby') enterLobby();
+          // Start countdown on first joiner; subsequent joiners just slide in
+          if (!lobbyActive) {
+            lobbyTicks  = LOBBY_COUNTDOWN_TICKS;
+            lobbyActive = true;
+          }
+          console.log(`[MP] Player ${id} "${p.name}" joined lobby (${Math.ceil(lobbyTicks / 30)}s left)`);
+          // Position them in the world so they can see the map while waiting
+          const s = randomSpawn();
+          p.x = s.x; p.y = s.y; p.angle = s.angle;
+          p.hp = 100; p.alive = true;
         }
       } else if (msg.type === 'rtc_offer' || msg.type === 'rtc_answer' || msg.type === 'rtc_ice') {
         // Relay WebRTC signaling to target player
@@ -1143,6 +1216,12 @@ wss.on('connection', ws => {
     for (const [, p] of players) {
       if (!p.isBot && p.ws && p.ws.readyState === WebSocket.OPEN)
         p.ws.send(JSON.stringify({ type: 'peer_left', id }));
+    }
+    // If no human players remain, reset everything to a fresh lobby
+    const humansLeft = Array.from(players.values()).filter(p => !p.isBot).length;
+    if (humansLeft === 0) {
+      if (roundPhase !== 'lobby') enterLobby();
+      else { lobbyActive = false; lobbyTicks = LOBBY_COUNTDOWN_TICKS; }
     }
   });
 });
