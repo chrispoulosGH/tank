@@ -230,8 +230,12 @@ document.getElementById('name-input').addEventListener('keydown', e => {
 function joinGame() {
   getAudio(); // initialise AudioContext during user gesture so it isn't blocked
   const hint = document.getElementById('join-hint');
+  const name = document.getElementById('name-input').value.trim();
+  if (name.length < 3) {
+    if (hint) { hint.textContent = '⚠ Callsign must be at least 3 characters'; hint.style.color = '#e74c3c'; }
+    return;
+  }
   if (hint) { hint.textContent = ''; hint.style.color = ''; }
-  const name = document.getElementById('name-input').value.trim() || 'Tank';
   document.getElementById('name-screen').style.display = 'none';
   document.getElementById('game-wrap').style.display = 'flex';
   if (isTouch()) { setupTouchControls(); requestFullscreenIfMobile(); }
@@ -274,6 +278,8 @@ function joinGame() {
         hint.style.color = '#e74c3c';
         if (msg.reason === 'name_taken')
           hint.textContent = '⚠ That callsign is already in use — choose another';
+        else if (msg.reason === 'name_too_short')
+          hint.textContent = '⚠ Callsign must be at least 3 characters';
         else
           hint.textContent = '⚠ Match in progress — wait for next round';
       }

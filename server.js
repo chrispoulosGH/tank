@@ -1169,8 +1169,13 @@ wss.on('connection', ws => {
         p.input.missile    = !!msg.missile;
         p.input.airStrike  = !!msg.airStrike;
       } else if (msg.type === 'name' && typeof msg.name === 'string') {
-        // Enforce unique callsign
-        const requestedName = msg.name.trim().substring(0, 16) || `Player ${id}`;
+        // Enforce callsign rules: min 3 chars, unique
+        const requestedName = msg.name.trim().substring(0, 16);
+        if (requestedName.length < 3) {
+          p.ws.send(JSON.stringify({ type: 'rejected', reason: 'name_too_short' }));
+          players.delete(id);
+          return;
+        }
         const nameTaken = Array.from(players.values()).some(
           other => other.id !== id && !other.isBot &&
                    other.name.toLowerCase() === requestedName.toLowerCase()
