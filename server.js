@@ -293,7 +293,7 @@ function tickRound() {
       lobbyTicks--;
       if (lobbyTicks <= 0) {
         const humanCount = Array.from(players.values()).filter(p => !p.isBot).length;
-        if (humanCount >= 2) {
+        if (matchMode === 'solo' || humanCount >= 2) {
           startMatch();
         } else {
           // Not enough players — pause countdown and wait for another joiner
@@ -1204,9 +1204,10 @@ wss.on('connection', ws => {
             const botId = nextPlayerId++;
             players.set(botId, createBot(botId, id, diff, i));
           }
-          matchMode = 'solo';
-          // Solo mode skips the lobby — start the match immediately
-          startMatch();
+          matchMode   = 'solo';
+          // 3-second get-ready countdown before the match starts
+          lobbyTicks  = 3 * 30;
+          lobbyActive = true;
         } else {
           // Multiplayer: enforce lobby / lock rules
           if (matchLocked) {

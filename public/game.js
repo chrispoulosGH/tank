@@ -1222,9 +1222,10 @@ function drawLobbyOverlay(round) {
 
   if (round.lobbyActive) {
     const secsLeft = Math.ceil(round.lobbyTicks / 30);
+    const soloCountdown = round.lobbyTicks <= 90; // ≤3s = solo get-ready
     ctx.font = 'bold 42px Courier New';
     ctx.fillStyle = '#f39c12';
-    ctx.fillText('MATCH STARTING', worldW / 2, worldH / 2 - 70);
+    ctx.fillText(soloCountdown ? 'GET READY!' : 'MATCH STARTING', worldW / 2, worldH / 2 - 70);
 
     const pulse = 0.88 + 0.12 * Math.sin(Date.now() / 400);
     ctx.font = `bold ${Math.round(96 * pulse)}px Courier New`;
