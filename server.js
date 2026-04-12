@@ -218,18 +218,11 @@ function enterLobby() {
   lobbyActive    = false;
   lobbyTicks     = LOBBY_COUNTDOWN_TICKS;
   bullets = []; mines = []; missiles = []; airStrikes = [];
-  for (const [, p] of players) p.score = 0;
-  // Respawn remaining humans and start countdown if any are present
-  const humans = Array.from(players.values()).filter(p => !p.isBot);
-  if (humans.length > 0) {
-    for (const p of humans) {
-      const s = randomSpawn();
-      p.x = s.x; p.y = s.y; p.angle = s.angle;
-      p.hp = 100; p.alive = true;
-      p.minesLeft = MAX_MINES; p.missileReady = true; p.airStrikeReady = true;
-      p.fireCooldown = 0; p.mineCooldown = 0;
-    }
-    lobbyActive = true;
+  // Send all connected humans back to the join screen — countdown only starts
+  // when someone actively clicks JOIN BATTLE again.
+  const goToMenu = JSON.stringify({ type: 'go_to_menu' });
+  for (const [, p] of players) {
+    if (!p.isBot && p.ws && p.ws.readyState === WebSocket.OPEN) p.ws.send(goToMenu);
   }
 }
 

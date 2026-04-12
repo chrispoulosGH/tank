@@ -269,6 +269,12 @@ function joinGame() {
       document.getElementById('name-screen').style.display = '';
       const hint = document.getElementById('join-hint');
       if (hint) { hint.textContent = '⚠ Match in progress — wait for next round'; hint.style.color = '#e74c3c'; }
+    } else if (msg.type === 'go_to_menu') {
+      ws.close();
+      document.getElementById('game-wrap').style.display  = 'none';
+      document.getElementById('name-screen').style.display = '';
+      const hint = document.getElementById('join-hint');
+      if (hint) { hint.textContent = 'Match over — click JOIN BATTLE to start a new one'; hint.style.color = '#f39c12'; }
     } else {
       Voice.handle(msg);
     }
