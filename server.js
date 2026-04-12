@@ -287,7 +287,16 @@ function tickRound() {
   if (roundPhase === 'lobby') {
     if (lobbyActive) {
       lobbyTicks--;
-      if (lobbyTicks <= 0) startMatch();
+      if (lobbyTicks <= 0) {
+        const humanCount = Array.from(players.values()).filter(p => !p.isBot).length;
+        if (humanCount >= 2) {
+          startMatch();
+        } else {
+          // Not enough players — pause countdown and wait for another joiner
+          lobbyActive = false;
+          lobbyTicks  = LOBBY_COUNTDOWN_TICKS;
+        }
+      }
     }
     return;
   }
@@ -1108,6 +1117,7 @@ function broadcastState() {
       history:       roundHistory,
       matchWinnerId,
       lobbyTicks,
+      lobbyActive,
       matchLocked
     }
   });

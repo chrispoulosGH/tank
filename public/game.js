@@ -1121,7 +1121,7 @@ function drawBlastEffects(dt) {
 function drawScoreboard(players, round) {
   const sorted = [...players].sort((a, b) => (b.roundWins ?? 0) - (a.roundWins ?? 0) || b.score - a.score);
   // On touch/mobile the canvas is scaled down ~0.49×, so boost fonts so they read at ~14px on screen
-  const fs    = isTouch() ? 2.2 : 1;
+  const fs    = isTouch() ? 1.54 : 0.7;
   const lineH = Math.round(19 * fs);
   const padX  = 10;
   const padY  = 10;
@@ -1196,8 +1196,6 @@ function drawRoundTimer(round) {
 }
 
 function drawLobbyOverlay(round) {
-  const secsLeft = Math.ceil(round.lobbyTicks / 30);
-
   ctx.fillStyle = 'rgba(0,0,0,0.70)';
   ctx.fillRect(0, 0, worldW, worldH);
 
@@ -1206,19 +1204,29 @@ function drawLobbyOverlay(round) {
   ctx.shadowColor = 'rgba(0,0,0,0.9)';
   ctx.shadowBlur  = 10;
 
-  ctx.font = 'bold 42px Courier New';
-  ctx.fillStyle = '#f39c12';
-  ctx.fillText('WAITING FOR PLAYERS', worldW / 2, worldH / 2 - 70);
+  if (round.lobbyActive) {
+    const secsLeft = Math.ceil(round.lobbyTicks / 30);
+    ctx.font = 'bold 42px Courier New';
+    ctx.fillStyle = '#f39c12';
+    ctx.fillText('MATCH STARTING', worldW / 2, worldH / 2 - 70);
 
-  // Big countdown number
-  const pulse = 0.88 + 0.12 * Math.sin(Date.now() / 400);
-  ctx.font = `bold ${Math.round(96 * pulse)}px Courier New`;
-  ctx.fillStyle = secsLeft <= 5 ? '#e74c3c' : '#ffffff';
-  ctx.fillText(secsLeft, worldW / 2, worldH / 2 + 30);
+    const pulse = 0.88 + 0.12 * Math.sin(Date.now() / 400);
+    ctx.font = `bold ${Math.round(96 * pulse)}px Courier New`;
+    ctx.fillStyle = secsLeft <= 5 ? '#e74c3c' : '#ffffff';
+    ctx.fillText(secsLeft, worldW / 2, worldH / 2 + 30);
 
-  ctx.font = 'bold 18px Courier New';
-  ctx.fillStyle = '#888';
-  ctx.fillText('Game starts when countdown reaches 0  ·  Others may join now', worldW / 2, worldH / 2 + 74);
+    ctx.font = 'bold 18px Courier New';
+    ctx.fillStyle = '#888';
+    ctx.fillText('Game starts when countdown reaches 0  ·  Others may join now', worldW / 2, worldH / 2 + 74);
+  } else {
+    ctx.font = 'bold 42px Courier New';
+    ctx.fillStyle = '#f39c12';
+    ctx.fillText('WAITING FOR PLAYERS', worldW / 2, worldH / 2 - 30);
+
+    ctx.font = 'bold 20px Courier New';
+    ctx.fillStyle = '#888';
+    ctx.fillText('Need at least 2 players to start', worldW / 2, worldH / 2 + 20);
+  }
 
   ctx.restore();
 }
