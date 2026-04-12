@@ -198,6 +198,7 @@ let roundHistory   = [];        // [{num, winnerId, winnerName, color}]
 let matchWinnerId  = null;
 
 // ─── Match / lobby state ───────────────────────────────────────────────────────
+let matchMode       = null;  // null | 'solo' | 'multi'
 let matchLocked     = false; // true once match starts — blocks new multi joiners
 let lobbyTicks      = LOBBY_COUNTDOWN_TICKS; // ticks remaining in join window
 let lobbyActive     = false; // true when countdown is running
@@ -211,6 +212,7 @@ function enterLobby() {
   roundWins.clear();
   roundHistory   = [];
   matchWinnerId  = null;
+  matchMode      = null;
   matchLocked    = false;
   inactivityTicks = 0;
   lobbyActive    = false;
@@ -1163,6 +1165,11 @@ wss.on('connection', ws => {
         p.name = msg.name.trim().substring(0, 16) || `Player ${id}`;
         // Single-player: spawn AI bots owned by this player (bypasses lobby)
         if (msg.bots && msg.bots >= 1) {
+          if (matchMode === 'multi') {
+            p.ws.send(JSON.stringify({ type: 'rejected', reason: 'multiplayer_match_active' }));
+            players.delete(id);
+            return;
+          }
           const count = Math.min(Math.floor(msg.bots), 5);
           const diff  = ['easy', 'medium', 'hard'].includes(msg.difficulty) ? msg.difficulty : 'medium';
           console.log(`[SP] Player ${id} "${p.name}" spawning ${count} ${diff} bots`);
@@ -1170,6 +1177,7 @@ wss.on('connection', ws => {
             const botId = nextPlayerId++;
             players.set(botId, createBot(botId, id, diff, i));
           }
+          matchMode = 'solo';
           // Solo mode skips the lobby — start the match immediately
           startMatch();
         } else {
@@ -1183,6 +1191,7 @@ wss.on('connection', ws => {
           if (roundPhase !== 'lobby') enterLobby();
           // Start countdown on first joiner; subsequent joiners just slide in
           if (!lobbyActive) {
+            matchMode   = 'multi';
             lobbyTicks  = LOBBY_COUNTDOWN_TICKS;
             lobbyActive = true;
           }
